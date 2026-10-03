@@ -30,6 +30,10 @@ dependencies = [
 # Application, not a library: don't build/install the project itself.
 package = false
 
+[tool.pytest.ini_options]
+pythonpath = ["."]  # lets tests import `services`, `agents` from the repo root
+testpaths = ["tests"]
+
 [dependency-groups]
 dev = [
     "ipykernel>=7.4.0",
