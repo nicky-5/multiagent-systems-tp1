@@ -1,0 +1,39 @@
+[project]
+name = "assignment"
+version = "0.1.0"
+description = "Multi-agent QA over tables in PDFs (LangGraph + Pinecone + Streamlit)"
+readme = "README.md"
+authors = [
+    { name = "Lu", email = "113854943+nicky-5@users.noreply.github.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "langchain>=1.4.3",
+    "langchain-core>=1.6.6",
+    "langchain-openai>=1.6.7",
+    "langchain-pinecone>=0.2.13",
+    "langgraph>=1.2.12",
+    "langsmith>=0.14.4",
+    "matplotlib>=3.11.2",
+    "pandas>=3.0.6",
+    "pinecone>=7.3.0",
+    "pyarrow>=25.0.1",
+    "pydantic>=2.13.5",
+    "pydantic-settings>=2.15.0",
+    "pymupdf>=1.28.2",
+    "python-dotenv>=1.2.4",
+    "streamlit>=1.65.0",
+    "tabulate>=0.10.0",
+]
+
+[tool.uv]
+# Application, not a library: don't build/install the project itself.
+package = false
+
+[dependency-groups]
+dev = [
+    "ipykernel>=7.4.0",
+    "pytest>=9.1.1",
+    "reportlab>=5.0.1",
+    "ruff>=0.16.10",
+]
