@@ -4,12 +4,16 @@ import pandas as pd
 import pytest
 
 from agents.ingestion.rules import (
+    MAX_METADATA_BYTES,
     build_record,
     count_sentences,
+    embedding_text,
     make_table_id,
+    metadata_size,
+    pinecone_metadata,
     validate_metadata,
 )
-from agents.ingestion.schemas import ColumnInfo, TableMetadata
+from agents.ingestion.schemas import ColumnInfo, TableMetadata, TableRecord
 from services.pdf_extract import ExtractedTable, TableContext
 
 DF = pd.DataFrame({
@@ -112,3 +116,46 @@ def test_build_record_fills_computed_fields():
     assert record.row_headers == ["Salta", "Jujuy"]  # read from the data; <NA> dropped
     assert record.n_rows == 3
     assert record.name == "Ventas por provincia 2024"  # LLM fields carried over
+
+
+# --- indexing --------------------------------------------------------------------
+
+
+def record(**overrides: Any) -> TableRecord:
+    table = ExtractedTable(pages=[2, 3], index_on_page=0, df=DF, context=TableContext())
+    built = build_record(meta(), table, "f" * 64, "informe.pdf")
+    return built.model_copy(update=overrides)  # a copy with some fields replaced
+
+
+def test_build_record_includes_a_preview():
+    assert record().preview.splitlines()[0].startswith("| Provincia")
+
+
+def test_embedding_text_has_name_columns_and_rows():
+    text = embedding_text(record())
+    assert text.splitlines()[0] == "Ventas por provincia 2024"
+    assert "Ventas 2024 (miles de ARS): Ventas netas" in text
+    assert text.endswith("Rows: Salta, Jujuy")
+
+
+def test_embedding_text_caps_row_labels():
+    text = embedding_text(record(row_headers=[f"r{i}" for i in range(60)]))
+    assert text.endswith("r49 (+10 more)")
+
+
+def test_pinecone_metadata_uses_only_allowed_values():
+    metadata = pinecone_metadata(record(), "text")
+    assert metadata["pages"] == ["2", "3"]  # lists hold strings
+    assert metadata["column_names"] == ["Provincia", "Ventas 2024"]
+    assert metadata["row_header_column"] == "Provincia"
+    assert "row_header_column" not in pinecone_metadata(record(row_header_column=None), "text")
+
+
+def test_pinecone_metadata_is_trimmed_to_fit():
+    labels = [f"Una etiqueta de fila bastante larga número {i}" for i in range(5000)]
+    metadata = pinecone_metadata(record(row_headers=labels), "text")
+
+    assert metadata_size(metadata) <= MAX_METADATA_BYTES
+    kept = metadata["row_headers"]
+    assert isinstance(kept, list) and 0 < len(kept) < len(labels)
+    assert metadata["preview"] != ""  # trimming row labels was enough

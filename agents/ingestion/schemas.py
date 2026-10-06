@@ -48,3 +48,4 @@ class TableRecord(TableMetadata):
     source: Source
     row_headers: list[str]  # values of row_header_column, read from the data
     n_rows: int
+    preview: str  # first rows as a Markdown table, shown in table selection and the UI

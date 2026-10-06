@@ -1,7 +1,7 @@
 """Nodes of the ingestion graph. Each takes the state and returns a partial update.
 
-extract runs once per PDF in the parent graph; the other nodes run inside the
-per-table subgraph, once per table and in parallel across tables.
+extract and index run once per PDF in the parent graph; the other nodes run inside
+the per-table subgraph, once per table and in parallel across tables.
 """
 
 import hashlib
@@ -16,8 +16,10 @@ from langgraph.config import get_stream_writer
 from agents.ingestion import prompts, rules
 from agents.ingestion.schemas import TableMetadata
 from agents.ingestion.state import IngestionState, TableState
-from services.llm import chat_model
+from services.llm import chat_model, embeddings
 from services.pdf_extract import extract_tables
+from services.table_store import table_store
+from services.vector_store import vector_store
 
 # --- parent graph --------------------------------------------------------------
 
@@ -36,6 +38,36 @@ def extract(state: IngestionState) -> dict[str, Any]:
         "tables": result.tables,
         "warnings": warnings,
     }
+
+
+def index(state: IngestionState) -> dict[str, Any]:
+    """Save and index every table that got a valid record, in one batch.
+
+    Runs once, after all the per-table branches have finished, so rejected tables
+    never get here. The table store is written first: a Pinecone record must never
+    point at data that isn't saved.
+    """
+    records = sorted(state["records"], key=lambda r: r.table_id)
+    if not records:
+        return {"indexed": []}
+
+    # Find each record's DataFrame by recomputing the id of every extracted table
+    frames = {
+        rules.make_table_id(state["doc_hash"], t.pages[0], t.index_on_page): t.df
+        for t in state["tables"]
+    }
+    store = table_store()
+    for record in records:
+        store.save(record, frames[record.table_id])
+
+    texts = [rules.embedding_text(record) for record in records]
+    vectors = embeddings().embed_documents(texts)  # one request for all the tables
+    vector_store().upsert(
+        ids=[record.table_id for record in records],
+        vectors=vectors,
+        metadatas=[rules.pinecone_metadata(record, text) for record, text in zip(records, texts, strict=True)],
+    )
+    return {"indexed": [record.table_id for record in records]}
 
 
 # --- per-table subgraph --------------------------------------------------------

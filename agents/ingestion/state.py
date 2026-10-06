@@ -35,6 +35,9 @@ class IngestionState(TypedDict):
     records: Records
     warnings: Warnings
 
+    # Set by index: ids of the tables saved and upserted, sorted
+    indexed: list[str]
+
 
 class TableState(TypedDict):
     """State of the per-table subgraph. Each parallel branch has its own copy,
@@ -70,4 +73,5 @@ def initial_state(pdf_path: str, max_attempts: int) -> IngestionState:
         "tables": [],
         "records": [],
         "warnings": [],
+        "indexed": [],
     }

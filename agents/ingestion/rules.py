@@ -1,13 +1,16 @@
 """Deterministic parts of ingestion: metadata validation, table ids, and records."""
 
+import json
 import re
 
 import pandas as pd
 
 from agents.ingestion.schemas import Source, TableMetadata, TableRecord
 from services.pdf_extract import ExtractedTable
+from services.vector_store import MetadataValue
 
 MAX_NAME_LENGTH = 80
+PREVIEW_ROWS = 5
 
 
 def make_table_id(doc_hash: str, first_page: int, index_on_page: int) -> str:
@@ -80,4 +83,66 @@ def build_record(
         source=Source(filename=filename, pages=table.pages),
         row_headers=row_headers,
         n_rows=len(table.df),
+        preview=table.df.head(PREVIEW_ROWS).to_markdown(index=False),
     )
+
+
+# --- indexing ------------------------------------------------------------------
+
+MAX_EMBEDDED_ROW_HEADERS = 50
+# Pinecone allows about 40 KB of metadata per record; keep a safety margin
+MAX_METADATA_BYTES = 38_000
+
+
+
+def embedding_text(record: TableRecord) -> str:
+    """The text whose embedding represents the table in Pinecone.
+
+    It holds what a question is likely to mention: the subject (name, description),
+    the measures (columns with units) and the entities (row labels).
+    """
+    columns = "; ".join(f"{c.name} ({c.unit}): {c.description}" for c in record.columns)
+    lines = [record.name, record.description, f"Columns: {columns}"]
+    if record.row_headers:
+        shown = record.row_headers[:MAX_EMBEDDED_ROW_HEADERS]
+        more = len(record.row_headers) - len(shown)
+        lines.append(f"Rows: {', '.join(shown)}" + (f" (+{more} more)" if more > 0 else ""))
+    return "\n".join(lines)
+
+
+def metadata_size(metadata: dict[str, MetadataValue]) -> int:
+    return len(json.dumps(metadata, ensure_ascii=False).encode())
+
+
+def pinecone_metadata(record: TableRecord, text: str) -> dict[str, MetadataValue]:
+    """Flatten a record into Pinecone metadata, trimmed to fit the size limit.
+
+    Everything the analyst needs to choose a table is here, so table selection
+    doesn't have to open the table store. The full data stays in the table store.
+    """
+    metadata: dict[str, MetadataValue] = {
+        "table_id": record.table_id,
+        "name": record.name,
+        "description": record.description,
+        "filename": record.source.filename,
+        "pages": [str(p) for p in record.source.pages],  # lists must hold strings
+        "column_names": [c.name for c in record.columns],
+        "columns_json": json.dumps([c.model_dump() for c in record.columns], ensure_ascii=False),
+        "row_headers": record.row_headers,
+        "n_rows": record.n_rows,
+        "preview": record.preview,
+        "text": text,
+    }
+    if record.row_header_column is not None:  # None isn't allowed, so leave the key out
+        metadata["row_header_column"] = record.row_header_column
+
+    # Too big (very long tables): drop the least important fields first. Halving
+    # row_headers keeps as many labels as fit.
+    row_headers = record.row_headers
+    while metadata_size(metadata) > MAX_METADATA_BYTES and row_headers:
+        row_headers = row_headers[: len(row_headers) // 2]
+        metadata["row_headers"] = row_headers
+    for key in ("preview", "text"):
+        if metadata_size(metadata) > MAX_METADATA_BYTES:
+            metadata[key] = ""
+    return metadata

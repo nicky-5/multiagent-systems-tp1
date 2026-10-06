@@ -1,6 +1,6 @@
 """The ingestion graph.
 
-    START -> extract -> (one process_table per table, in parallel) -> END
+    START -> extract -> (one process_table per table, in parallel) -> index -> END
 
 process_table is itself a graph (a subgraph), run once per table:
 
@@ -67,12 +67,15 @@ def build_graph() -> CompiledStateGraph[IngestionState, None, IngestionState, In
     graph.add_node("extract", nodes.extract)
     # A compiled graph can be used as a node; LangGraph runs it as a subgraph.
     graph.add_node("process_table", build_table_graph())
+    graph.add_node("index", nodes.index, retry_policy=RetryPolicy(max_attempts=3))
 
     graph.add_edge(START, "extract")
     # fan_out returns a list of Send objects, so the possible destinations can't be
     # read from its return type; the third argument lists them (for drawing the graph).
     graph.add_conditional_edges("extract", edges.fan_out, ["process_table", END])
-    graph.add_edge("process_table", END)  # runs once every branch has finished
+    # A node after a fan-out runs once, when every branch has finished
+    graph.add_edge("process_table", "index")
+    graph.add_edge("index", END)
 
     return graph.compile()
 
@@ -120,6 +123,8 @@ if __name__ == "__main__":
             elif node == "process_table":  # a branch finished; its output reaches the parent
                 records += update.get("records", [])
                 warnings += update.get("warnings", [])
+            elif node == "index":
+                print(f"{elapsed} [index] saved and upserted {len(update['indexed'])} tables")
 
     print(f"\n{len(records)} records, warnings: {warnings}")
     for record in records:

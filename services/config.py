@@ -23,9 +23,13 @@ class Settings(BaseSettings):
     litellm_api_key: SecretStr  # SecretStr prints as '**********', so it can't leak into logs
     llm_model: str = "gpt-4.1-mini"
     embedding_model: str = "text-embedding-3-small"
+    embedding_dimension: int = 1536  # vector size of embedding_model
 
     pinecone_api_key: SecretStr
     pinecone_index_name: str = "mas-2026s2-tables"
+    # Where a new index is created (the free plan supports aws / us-east-1)
+    pinecone_cloud: str = "aws"
+    pinecone_region: str = "us-east-1"
 
     # How many times the ingestion agent asks the LLM for a table's metadata before giving up
     ingest_max_attempts: int = 3
