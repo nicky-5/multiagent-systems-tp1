@@ -9,9 +9,11 @@ the LiteLLM proxy and send the vectors, rather than letting Pinecone embed text.
 # pyright: reportUnknownMemberType=false
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from functools import lru_cache
+from typing import Any, cast
 
-from pinecone import Pinecone, ServerlessSpec, Vector
+from pinecone import Pinecone, QueryResponse, ServerlessSpec, Vector
 from pinecone.db_data import Index
 
 from services.config import get_settings
@@ -23,6 +25,15 @@ MetadataValue = str | int | float | list[str] | list[int] | list[float]
 # Pinecone accepts at most 2 MB per upsert request; with up to ~40 KB of metadata per
 # record, 40 records per request stays under it.
 UPSERT_BATCH_SIZE = 40
+
+
+@dataclass
+class Match:
+    """One search result: a table's id, its similarity to the query, and its metadata."""
+
+    id: str
+    score: float  # cosine similarity: higher is closer
+    metadata: dict[str, Any]
 
 
 class VectorStore:
@@ -45,6 +56,17 @@ class VectorStore:
             return 0
         self.index.upsert(vectors=records, batch_size=UPSERT_BATCH_SIZE, show_progress=False)
         return len(records)
+
+    def query(self, vector: Sequence[float], top_k: int) -> list[Match]:
+        """The top_k records most similar to vector, best first."""
+        # query() is typed as also returning an async result whose type is unknown.
+        # Treat the result as a plain object, then let isinstance narrow it; that also
+        # fails loudly if an async result ever comes back.
+        response = cast(object, self.index.query(vector=list(vector), top_k=top_k, include_metadata=True))
+        if not isinstance(response, QueryResponse):
+            raise TypeError(f"Unexpected Pinecone response: {type(response).__name__}")
+        matches = cast(list[Any], response.matches)  # loosely typed SDK objects
+        return [Match(id=m.id, score=float(m.score), metadata=dict(m.metadata or {})) for m in matches]
 
 
 @lru_cache  # one client and one index check per process

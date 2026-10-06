@@ -6,17 +6,15 @@ the per-table subgraph, once per table and in parallel across tables.
 
 import hashlib
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
-from langchain_core.language_models import LanguageModelInput
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
-from langchain_core.runnables import Runnable
 from langgraph.config import get_stream_writer
 
 from agents.ingestion import prompts, rules
 from agents.ingestion.schemas import TableMetadata
 from agents.ingestion.state import IngestionState, TableState
-from services.llm import chat_model, embeddings
+from services.llm import chat_model, embeddings, with_schema
 from services.pdf_extract import extract_tables
 from services.table_store import table_store
 from services.vector_store import vector_store
@@ -86,14 +84,7 @@ def enrich(state: TableState) -> dict[str, Any]:
         feedback = prompts.retry_prompt(previous.model_dump_json(), state["errors"])
         messages.append(HumanMessage(feedback))
 
-    # with_structured_output sends TableMetadata's JSON schema with the request and
-    # parses the reply into a TableMetadata instance. LangChain annotates one of its
-    # parameters as a bare `list`, which strict mode reports as partially unknown.
-    llm = cast(
-        Runnable[LanguageModelInput, TableMetadata],
-        chat_model().with_structured_output(TableMetadata),  # pyright: ignore[reportUnknownMemberType]
-    )
-    metadata = llm.invoke(messages)
+    metadata = with_schema(chat_model(), TableMetadata).invoke(messages)
     return {"metadata": metadata, "attempt": attempt}
 
 

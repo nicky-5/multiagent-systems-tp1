@@ -28,6 +28,9 @@ class TableStore:
         _atomic_write(self._path(record.table_id, ".parquet"), df.to_parquet(index=False))
         _atomic_write(self._path(record.table_id, ".json"), record.model_dump_json(indent=2).encode())
 
+    def exists(self, table_id: str) -> bool:
+        return self._path(table_id, ".parquet").exists()
+
     def load_df(self, table_id: str) -> pd.DataFrame:
         return pd.read_parquet(self._path(table_id, ".parquet"))
 

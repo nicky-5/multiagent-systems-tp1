@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     # How many tables the ingestion agent processes in parallel
     ingest_max_concurrency: int = 4
 
+    # Analyst: results per Pinecone search, and how many tables the LLM may choose from
+    analyst_top_k: int = 5
+    analyst_max_candidates: int = 8
+
     data_dir: Path = ROOT / "data"
 
     @property
