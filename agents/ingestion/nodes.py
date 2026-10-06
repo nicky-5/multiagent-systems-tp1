@@ -1,4 +1,8 @@
-"""Nodes of the ingestion graph. Each takes the state and returns a partial update."""
+"""Nodes of the ingestion graph. Each takes the state and returns a partial update.
+
+extract runs once per PDF in the parent graph; the other nodes run inside the
+per-table subgraph, once per table and in parallel across tables.
+"""
 
 import hashlib
 from pathlib import Path
@@ -7,12 +11,15 @@ from typing import Any, cast
 from langchain_core.language_models import LanguageModelInput
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_core.runnables import Runnable
+from langgraph.config import get_stream_writer
 
 from agents.ingestion import prompts, rules
 from agents.ingestion.schemas import TableMetadata
-from agents.ingestion.state import IngestionState
+from agents.ingestion.state import IngestionState, TableState
 from services.llm import chat_model
 from services.pdf_extract import extract_tables
+
+# --- parent graph --------------------------------------------------------------
 
 
 def extract(state: IngestionState) -> dict[str, Any]:
@@ -28,16 +35,19 @@ def extract(state: IngestionState) -> dict[str, Any]:
         "doc_hash": hashlib.sha256(pdf_bytes).hexdigest(),
         "tables": result.tables,
         "warnings": warnings,
-        **_start_table(0),
     }
 
 
-def enrich(state: IngestionState) -> dict[str, Any]:
-    """Ask the LLM for the current table's metadata, with feedback on a retry."""
-    table = state["tables"][state["current"]]
+# --- per-table subgraph --------------------------------------------------------
+
+
+def enrich(state: TableState) -> dict[str, Any]:
+    """Ask the LLM for the table's metadata, with feedback on a retry."""
+    attempt = state["attempt"] + 1
+    _progress(state, f"asking the LLM for metadata (attempt {attempt})")
     messages: list[BaseMessage] = [
         SystemMessage(prompts.ENRICH_SYSTEM),
-        HumanMessage(prompts.enrich_user_prompt(table, state["filename"])),
+        HumanMessage(prompts.enrich_user_prompt(state["table"], state["filename"])),
     ]
     previous = state["metadata"]
     if previous is not None and state["errors"]:  # a retry: show the LLM what was wrong
@@ -52,38 +62,42 @@ def enrich(state: IngestionState) -> dict[str, Any]:
         chat_model().with_structured_output(TableMetadata),  # pyright: ignore[reportUnknownMemberType]
     )
     metadata = llm.invoke(messages)
-    return {"metadata": metadata, "attempt": state["attempt"] + 1}
+    return {"metadata": metadata, "attempt": attempt}
 
 
-def validate(state: IngestionState) -> dict[str, Any]:
+def validate(state: TableState) -> dict[str, Any]:
     """Check the metadata against the table (no LLM). The edge after this node
     decides between accepting, retrying and giving up."""
     metadata = state["metadata"]
     assert metadata is not None  # enrich always runs first
-    table = state["tables"][state["current"]]
-    return {"errors": rules.validate_metadata(metadata, table.df)}
+    errors = rules.validate_metadata(metadata, state["table"].df)
+    _progress(state, f"validation failed: {'; '.join(errors)}" if errors else "metadata is valid")
+    return {"errors": errors}
 
 
-def build_record(state: IngestionState) -> dict[str, Any]:
-    """Turn the validated metadata into a complete record, then move to the next table."""
+def build_record(state: TableState) -> dict[str, Any]:
+    """Turn the validated metadata into a complete record."""
     metadata = state["metadata"]
     assert metadata is not None
-    table = state["tables"][state["current"]]
-    record = rules.build_record(metadata, table, state["doc_hash"], state["filename"])
-    return {"records": [record], **_start_table(state["current"] + 1)}
+    record = rules.build_record(metadata, state["table"], state["doc_hash"], state["filename"])
+    _progress(state, f"done: {record.name!r}")
+    return {"records": [record]}
 
 
-def reject(state: IngestionState) -> dict[str, Any]:
+def reject(state: TableState) -> dict[str, Any]:
     """Give up on a table whose metadata never validated, and say so in the UI."""
-    table = state["tables"][state["current"]]
-    problems = "; ".join(state["errors"])
     warning = (
-        f"Table on page(s) {table.pages} skipped: metadata still invalid after "
-        f"{state['attempt']} attempts ({problems})."
+        f"{state['label']} skipped: metadata still invalid after {state['attempt']} "
+        f"attempts ({'; '.join(state['errors'])})."
     )
-    return {"warnings": [warning], **_start_table(state["current"] + 1)}
+    _progress(state, "skipped")
+    return {"warnings": [warning]}
 
 
-def _start_table(index: int) -> dict[str, Any]:
-    """State update that points the loop at tables[index] with a clean slate."""
-    return {"current": index, "attempt": 0, "metadata": None, "errors": []}
+def _progress(state: TableState, message: str) -> None:
+    """Emit a progress event, received by callers that stream with stream_mode="custom".
+
+    Parallel branches' node updates don't say which table they belong to, so the UI
+    uses these labeled events to show per-table progress. Outside a stream it's a no-op.
+    """
+    get_stream_writer()({"table": state["label"], "message": message})

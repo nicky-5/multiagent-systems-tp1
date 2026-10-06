@@ -29,6 +29,8 @@ class Settings(BaseSettings):
 
     # How many times the ingestion agent asks the LLM for a table's metadata before giving up
     ingest_max_attempts: int = 3
+    # How many tables the ingestion agent processes in parallel
+    ingest_max_concurrency: int = 4
 
     data_dir: Path = ROOT / "data"
 
