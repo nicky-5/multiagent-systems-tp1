@@ -3,7 +3,6 @@ import pytest
 from services.numbers import infer_decimal_sep, parse_number
 
 
-# parametrize runs the test once per tuple, and each case is reported separately.
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
@@ -25,17 +24,17 @@ from services.numbers import infer_decimal_sep, parse_number
         ("2023", 2023),
     ],
 )
-def test_parse_number(text, expected):
+def test_parse_number(text: str, expected: float):
     assert parse_number(text) == expected
 
 
 @pytest.mark.parametrize("text", [None, "", "  ", "-", "—", "n/a", "s/d"])
-def test_blank_cells_are_none(text):
+def test_blank_cells_are_none(text: str | None):
     assert parse_number(text) is None
 
 
 @pytest.mark.parametrize("text", ["Buenos Aires", "2023 Unidades", "1.2.3", "12a", "(", "%"])
-def test_non_numbers_are_none(text):
+def test_non_numbers_are_none(text: str):
     assert parse_number(text) is None
 
 

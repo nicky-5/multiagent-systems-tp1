@@ -9,9 +9,11 @@ TextBlock), and the rest of the pipeline is pure functions over that data:
 
 import re
 import statistics
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
+from itertools import accumulate, groupby, takewhile
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, NamedTuple, Protocol, cast
 
 import pandas as pd
 import pymupdf
@@ -26,7 +28,13 @@ BBox = tuple[float, float, float, float]  # (x0, y0, x1, y1), points, origin top
 Pos = tuple[int, float]
 
 MAX_HEADER_ROWS = 3
+START_OF_DOC: Pos = (0, 0.0)
 END_OF_DOC: Pos = (10**9, 0.0)
+# A caption's box includes its font descent, so it can overlap the table's edge by a few points.
+CAPTION_OVERLAP = 3
+MIN_CONTENT_IMAGE_HEIGHT = 100  # smaller images are usually logos
+MAX_HEADING_LENGTH = 150
+HEADING_SIZE_MARGIN = 1.5
 
 
 @dataclass
@@ -50,7 +58,7 @@ class Table:
 
     @property
     def pages(self) -> list[int]:
-        return [p.page for p in self.parts]
+        return [part.page for part in self.parts]
 
     @property
     def n_cols(self) -> int:
@@ -81,8 +89,8 @@ class TextBlock:
 class TableContext:
     document_title: str | None = None
     heading: str | None = None  # nearest section heading above the table
-    above: list[str] = field(default_factory=list)  # caption / paragraphs before it
-    below: list[str] = field(default_factory=list)  # notes / source lines after it
+    above: list[str] = field(default_factory=list[str])  # caption / paragraphs before it
+    below: list[str] = field(default_factory=list[str])  # notes / source lines after it
 
 
 @dataclass
@@ -113,18 +121,18 @@ def _is_year(text: str) -> bool:
 
 def _looks_like_header(row: Row) -> bool:
     """Header rows hold labels: no cell is a number, except years such as "2023"."""
-    cells = [c for c in row if c is not None and not is_blank(c)]
-    return bool(cells) and all(parse_number(c) is None or _is_year(c) for c in cells)
+    cells = [cell for cell in row if cell is not None and not is_blank(cell)]
+    return bool(cells) and all(parse_number(cell) is None or _is_year(cell) for cell in cells)
 
 
 def split_header(rows: list[Row]) -> tuple[list[Row], list[Row]]:
     """Split rows into (header_rows, body). The header is the leading label-only rows."""
-    n = 0
-    while n < min(len(rows), MAX_HEADER_ROWS) and _looks_like_header(rows[n]):
-        n += 1
-    if n == len(rows):  # a table of text only: assume a single header row
-        n = 1
-    return rows[:n], rows[n:]
+    header_size = 0
+    while header_size < min(len(rows), MAX_HEADER_ROWS) and _looks_like_header(rows[header_size]):
+        header_size += 1
+    if header_size == len(rows):  # a table of text only: assume a single header row
+        header_size = 1
+    return rows[:header_size], rows[header_size:]
 
 
 def flatten_header(header_rows: list[Row]) -> list[str]:
@@ -138,48 +146,47 @@ def flatten_header(header_rows: list[Row]) -> list[str]:
     across. A vertical merge would also give None, but grouped column headers
     (one year spanning several columns) are by far the more common case.
     """
-    filled = []
-    for row in header_rows:
-        out, last = [], ""
-        for cell in row:
-            last = last if cell is None else cell
-            out.append(last)
-        filled.append(out)
+    filled_rows = [_fill_merged_cells(row) for row in header_rows]
+    columns = zip(*filled_rows)  # zip(*rows) transposes rows into columns
+    return unique_names([_join_labels(column_labels) for column_labels in columns])
 
-    names = []
-    for col in zip(*filled):  # zip(*rows) transposes rows into columns
-        parts = []
-        for part in col:
-            if part and (not parts or parts[-1] != part):
-                parts.append(part)
-        names.append(" ".join(parts))
-    return unique_names(names)
+
+def _fill_merged_cells(row: Row) -> list[str]:
+    """Replace each None with the text to its left: ["2023", None] -> ["2023", "2023"]."""
+    def carry_left(last_text: str, cell: str | None) -> str:
+        return last_text if cell is None else cell
+
+    return list(accumulate(row, carry_left, initial=""))[1:]  # drop the initial ""
+
+
+def _join_labels(labels: Iterable[str]) -> str:
+    """Join a column's header labels, skipping empty ones and repeats: ("2023", "2023", "Monto") -> "2023 Monto"."""
+    non_empty = (label for label in labels if label)
+    return " ".join(label for label, _ in groupby(non_empty))  # groupby collapses consecutive repeats
 
 
 def unique_names(names: list[str]) -> list[str]:
     """Name empty columns column_N and number duplicates, so every name is a valid DataFrame column."""
-    seen: dict[str, int] = {}
-    out = []
-    for i, name in enumerate(names):
-        name = name or f"column_{i + 1}"
-        seen[name] = seen.get(name, 0) + 1
-        out.append(name if seen[name] == 1 else f"{name} ({seen[name]})")
-    return out
+    named = [name or f"column_{position}" for position, name in enumerate(names, start=1)]
+    earlier_uses = [named[:index].count(name) for index, name in enumerate(named)]
+    return [
+        name if uses == 0 else f"{name} ({uses + 1})" for name, uses in zip(named, earlier_uses)
+    ]
 
 
 # --- continuation tables -----------------------------------------------------
 
 
-def is_continuation(prev: Table, raw: RawTable, header: list[Row]) -> bool:
+def is_continuation(previous: Table, raw: RawTable, header: list[Row]) -> bool:
     """assignment.md §5.1: a table at the start of the next page, with the same number
     of columns, that either repeats the header row or has no header row."""
-    last = prev.parts[-1]
+    previous_part = previous.parts[-1]
     return (
-        raw.page == last.page + 1
-        and last.is_last_on_page
+        raw.page == previous_part.page + 1
+        and previous_part.is_last_on_page
         and raw.index_on_page == 0
-        and len(raw.rows[0]) == prev.n_cols
-        and (not header or header == prev.header_rows)
+        and len(raw.rows[0]) == previous.n_cols
+        and (not header or header == previous.header_rows)
     )
 
 
@@ -210,24 +217,31 @@ def to_dataframe(table: Table) -> pd.DataFrame:
     if table.header_rows:
         columns = flatten_header(table.header_rows)
     else:
-        columns = [f"column_{i + 1}" for i in range(table.n_cols)]
-    body = [[c or "" for c in row] for row in table.body]  # merged body cells -> ""
+        columns = [f"column_{position}" for position in range(1, table.n_cols + 1)]
+    body = [[cell or "" for cell in row] for row in table.body]  # merged body cells -> ""
     body = [row for row in body if any(row)]
-    decimal_sep = infer_decimal_sep(c for row in body for c in row)
+    decimal_sep = infer_decimal_sep(cell for row in body for cell in row)
 
-    data = {}
-    for i, name in enumerate(columns):
-        cells = [row[i] for row in body]
-        filled = [c for c in cells if not is_blank(c)]
-        numbers = [parse_number(c, decimal_sep) for c in cells]
-        if filled and all(parse_number(c, decimal_sep) is not None for c in filled):
-            if all("%" in c for c in filled) and "%" not in name:
-                name = f"{name} (%)"
-            integral = all(n is None or n.is_integer() for n in numbers)
-            data[name] = pd.Series(numbers, dtype="Int64" if integral else "Float64")
-        else:
-            data[name] = pd.Series([None if is_blank(c) else c for c in cells], dtype="string")
-    return pd.DataFrame(data)
+    return pd.DataFrame(
+        dict(
+            _typed_column(name, [row[column_index] for row in body], decimal_sep)
+            for column_index, name in enumerate(columns)
+        )
+    )
+
+
+def _typed_column(name: str, cells: list[str], decimal_sep: str | None) -> tuple[str, pd.Series]:
+    """A (name, Series) pair: numeric if every non-blank cell parses as a number, text otherwise."""
+    filled = [cell for cell in cells if not is_blank(cell)]
+    numbers = [parse_number(cell, decimal_sep) for cell in cells]
+    is_numeric = filled and all(parse_number(cell, decimal_sep) is not None for cell in filled)
+    if not is_numeric:
+        return name, pd.Series([None if is_blank(cell) else cell for cell in cells], dtype="string")
+
+    if all("%" in cell for cell in filled) and "%" not in name:
+        name = f"{name} (%)"
+    is_integral = all(number is None or number.is_integer() for number in numbers)
+    return name, pd.Series(numbers, dtype="Int64" if is_integral else "Float64")
 
 
 # --- context -----------------------------------------------------------------
@@ -237,7 +251,7 @@ def collect_context(
     blocks: list[TextBlock],
     start: Pos,
     end: Pos,
-    prev_end: Pos = (0, 0.0),
+    prev_end: Pos = START_OF_DOC,
     next_start: Pos = END_OF_DOC,
     max_above: int = 4,
     max_below: int = 2,
@@ -248,20 +262,22 @@ def collect_context(
     "Above" stops at the nearest heading or the previous table, whichever is
     closer; "below" stops at the next heading or table.
     """
-    headings = [b for b in blocks if b.is_heading]
-    before = [b for b in blocks if b.top < start]  # compare tops: captions overlap the table slightly
-    heading = next((b for b in reversed(before) if b.is_heading), None)
+    headings = [block for block in blocks if block.is_heading]
+    # Compare tops rather than bottoms, because captions overlap the table slightly.
+    before = [block for block in blocks if block.top < start]
+    heading = next((block for block in reversed(before) if block.is_heading), None)
 
-    lower = max(prev_end, heading.top if heading else (0, 0.0))
-    above = [b.text for b in before if not b.is_heading and b.top > lower][-max_above:]
+    above_starts_after = max(prev_end, heading.top if heading else START_OF_DOC)
+    above = [
+        block.text for block in before if not block.is_heading and block.top > above_starts_after
+    ][-max_above:]
 
-    below = []
-    for b in blocks:
-        if b.top <= (end[0], end[1] - 3):  # -3pt tolerance, as for captions
-            continue
-        if b.top >= next_start or b.is_heading or len(below) == max_below:
-            break
-        below.append(b.text)
+    end_page, end_y = end
+    after_table = (block for block in blocks if block.top > (end_page, end_y - CAPTION_OVERLAP))
+    before_next_section = takewhile(
+        lambda block: block.top < next_start and not block.is_heading, after_table
+    )
+    below = [block.text for block in before_next_section][:max_below]
 
     return TableContext(
         document_title=headings[0].text if headings else None,
@@ -272,82 +288,165 @@ def collect_context(
 
 
 # --- PyMuPDF -----------------------------------------------------------------
+# Most of PyMuPDF's API has no type annotations. These protocols declare the parts
+# we call, so the type checker can still check our code against them.
 
 
-def _inside(bbox: BBox, area: BBox) -> bool:
-    """True if bbox's centre lies within area."""
-    cx, cy = (bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2
-    return area[0] <= cx <= area[2] and area[1] <= cy <= area[3]
+class _PdfTable(Protocol):
+    @property
+    def bbox(self) -> Sequence[float]: ...
+    def extract(self) -> list[Row]: ...
 
 
-def _page_blocks(
-    page: pymupdf.Page, page_no: int, table_bboxes: list[BBox]
-) -> list[tuple[TextBlock, float, bool]]:
-    """Text blocks outside tables, each with its largest font size and whether it's all bold."""
-    out = []
-    # get_text() returns str, list or dict depending on its argument, so its declared
-    # return type is a union. cast() tells the type checker which one we know we get;
-    # it does nothing at runtime.
-    page_dict = cast(dict[str, Any], page.get_text("dict"))
-    for b in page_dict["blocks"]:
-        spans = [s for line in b.get("lines", []) for s in line["spans"] if s["text"].strip()]
-        x0, y0, x1, y1 = b["bbox"]
-        bbox = (x0, y0, x1, y1)
-        if not spans or any(_inside(bbox, t) for t in table_bboxes):
-            continue
-        text = " ".join(" ".join(s["text"] for s in line["spans"]) for line in b["lines"])
-        bold = all(s["flags"] & pymupdf.TEXT_FONT_BOLD or "Bold" in s["font"] for s in spans)
-        block = TextBlock(page=page_no, bbox=bbox, text=" ".join(text.split()))
-        out.append((block, max(s["size"] for s in spans), bold))
-    return out
+class _PdfTableFinder(Protocol):
+    @property
+    def tables(self) -> list[_PdfTable]: ...
+
+
+class _PdfPage(Protocol):
+    def get_text(self, option: str = "text") -> Any: ...
+    def get_images(self) -> list[Any]: ...
+    def find_tables(self) -> _PdfTableFinder | None: ...
+    def get_image_info(self) -> list[dict[str, Any]]: ...
+
+
+class _PdfDocument(Protocol):
+    def pages(self) -> Iterable[_PdfPage]: ...
+
+
+def _open_pdf(pdf: str | Path | bytes) -> _PdfDocument:
+    doc = pymupdf.open(stream=pdf, filetype="pdf") if isinstance(pdf, bytes) else pymupdf.open(pdf)
+    return cast(_PdfDocument, doc)
+
+
+def _to_bbox(coordinates: Sequence[float]) -> BBox:
+    x0, y0, x1, y1 = coordinates
+    return (x0, y0, x1, y1)
+
+
+class _StyledBlock(NamedTuple):
+    block: TextBlock
+    font_size: float  # the largest in the block
+    is_bold: bool
+
+
+def _center_is_inside(bbox: BBox, area: BBox) -> bool:
+    left, top, right, bottom = area
+    center_x, center_y = (bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2
+    return left <= center_x <= right and top <= center_y <= bottom
+
+
+def _page_blocks(page: _PdfPage, page_no: int, table_bboxes: list[BBox]) -> list[_StyledBlock]:
+    """Text blocks outside tables, with their font size and boldness."""
+    page_dict: dict[str, Any] = page.get_text("dict")
+    styled_blocks = [_style_block(raw_block, page_no) for raw_block in page_dict["blocks"]]
+    return [
+        styled
+        for styled in styled_blocks
+        if styled is not None
+        and not any(_center_is_inside(styled.block.bbox, table_bbox) for table_bbox in table_bboxes)
+    ]
+
+
+def _style_block(raw_block: dict[str, Any], page_no: int) -> _StyledBlock | None:
+    """Convert one PyMuPDF text block, or None if it holds only whitespace."""
+    lines = raw_block.get("lines", [])
+    spans = [span for line in lines for span in line["spans"] if span["text"].strip()]
+    if not spans:
+        return None
+    text = " ".join(" ".join(span["text"] for span in line["spans"]) for line in lines)
+    return _StyledBlock(
+        block=TextBlock(page=page_no, bbox=_to_bbox(raw_block["bbox"]), text=" ".join(text.split())),
+        font_size=max(span["size"] for span in spans),
+        is_bold=all(span["flags"] & pymupdf.TEXT_FONT_BOLD or "Bold" in span["font"] for span in spans),
+    )
+
+
+def _mark_headings(styled_blocks: list[_StyledBlock]) -> list[TextBlock]:
+    """Headings are short and bold, or clearly larger than the document's median text size."""
+    if not styled_blocks:
+        return []
+    body_size = statistics.median(styled.font_size for styled in styled_blocks)
+    for styled in styled_blocks:
+        is_large = styled.font_size > body_size + HEADING_SIZE_MARGIN
+        is_short = len(styled.block.text) < MAX_HEADING_LENGTH
+        styled.block.is_heading = (styled.is_bold or is_large) and is_short
+    return [styled.block for styled in styled_blocks]
 
 
 def extract_tables(pdf: str | Path | bytes) -> ExtractionResult:
     """Extract every table in the PDF as a DataFrame plus its surrounding text."""
-    doc = pymupdf.open(stream=pdf, filetype="pdf") if isinstance(pdf, bytes) else pymupdf.open(pdf)
+    doc = _open_pdf(pdf)
     raw_tables: list[RawTable] = []
-    sized_blocks: list[tuple[TextBlock, float, bool]] = []
+    styled_blocks: list[_StyledBlock] = []
     warnings: list[str] = []
 
     # page.number is typed int | None, so count pages ourselves (1-based)
     for page_no, page in enumerate(doc.pages(), start=1):
-        if not cast(str, page.get_text()).strip():
+        page_text: str = page.get_text()
+        if not page_text.strip():
             if page.get_images():
                 warnings.append(f"Page {page_no} has no text layer (scanned image?); skipped.")
             continue
 
-        finder = page.find_tables()  # typed as possibly None
-        found = finder.tables if finder else []
-        for i, tab in enumerate(found):
-            rows = [[clean_cell(c) for c in row] for row in tab.extract()]
-            if all(is_blank(c) for row in rows for c in row):
-                warnings.append(f"Page {page_no}, table {i + 1}: no readable text; skipped.")
-                continue
-            raw_tables.append(RawTable(page_no, i, i == len(found) - 1, tuple(tab.bbox), rows))
-        sized_blocks += _page_blocks(page, page_no, [tuple(t.bbox) for t in found])
+        finder = page.find_tables()
+        found_tables = finder.tables if finder else []
+        page_tables = [
+            RawTable(
+                page=page_no,
+                index_on_page=table_index,
+                is_last_on_page=table_index == len(found_tables) - 1,
+                bbox=_to_bbox(found.bbox),
+                rows=[[clean_cell(cell) for cell in row] for row in found.extract()],
+            )
+            for table_index, found in enumerate(found_tables)
+        ]
+        raw_tables += [table for table in page_tables if not _is_empty(table)]
+        warnings += [
+            f"Page {page_no}, table {table.index_on_page + 1}: no readable text; skipped."
+            for table in page_tables
+            if _is_empty(table)
+        ]
+        styled_blocks += _page_blocks(page, page_no, [table.bbox for table in page_tables])
 
-        for img in page.get_image_info():
-            if img["bbox"][3] - img["bbox"][1] > 100:  # small images are usually logos
-                warnings.append(
-                    f"Page {page_no} contains an image; any table inside it was not extracted."
-                )
+        warnings += [
+            f"Page {page_no} contains an image; any table inside it was not extracted."
+            for image in page.get_image_info()
+            if _is_content_image(image)
+        ]
 
-    # Headings are bold or clearly larger than the document's typical (median) text size.
-    body_size = statistics.median(size for _, size, _ in sized_blocks) if sized_blocks else 0
-    blocks = []
-    for block, size, bold in sized_blocks:
-        block.is_heading = (bold or size > body_size + 1.5) and len(block.text) < 150
-        blocks.append(block)
-
+    blocks = _mark_headings(styled_blocks)
     tables = merge_continuations(raw_tables)
-    result = []
-    for i, table in enumerate(tables):
-        context = collect_context(
-            blocks,
-            table.start,
-            table.end,
-            prev_end=tables[i - 1].end if i > 0 else (0, 0.0),
-            next_start=tables[i + 1].start if i + 1 < len(tables) else END_OF_DOC,
+    extracted = [
+        ExtractedTable(
+            pages=table.pages,
+            index_on_page=table.parts[0].index_on_page,
+            df=to_dataframe(table),
+            context=_context_of(tables, table_index, blocks),
         )
-        result.append(ExtractedTable(table.pages, table.parts[0].index_on_page, to_dataframe(table), context))
-    return ExtractionResult(result, warnings)
+        for table_index, table in enumerate(tables)
+    ]
+    return ExtractionResult(extracted, warnings)
+
+
+def _is_empty(table: RawTable) -> bool:
+    return all(is_blank(cell) for row in table.rows for cell in row)
+
+
+def _is_content_image(image: dict[str, Any]) -> bool:
+    _, image_top, _, image_bottom = image["bbox"]
+    return image_bottom - image_top > MIN_CONTENT_IMAGE_HEIGHT
+
+
+def _context_of(tables: list[Table], table_index: int, blocks: list[TextBlock]) -> TableContext:
+    """The text around tables[table_index], bounded by its neighbouring tables."""
+    table = tables[table_index]
+    is_first = table_index == 0
+    is_last = table_index == len(tables) - 1
+    return collect_context(
+        blocks,
+        table.start,
+        table.end,
+        prev_end=START_OF_DOC if is_first else tables[table_index - 1].end,
+        next_start=END_OF_DOC if is_last else tables[table_index + 1].start,
+    )

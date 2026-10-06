@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Multi-agent QA over tables in PDFs (LangGraph + Pinecone + Streamlit)"
 readme = "README.md"
 authors = [
-    { name = "Lu", email = "113854943+nicky-5@users.noreply.github.com" }
+    { name = "Lu", email = "113854943+nicky-5@users.noreply.github.com" },
 ]
 requires-python = ">=3.14"
 dependencies = [
@@ -31,13 +31,17 @@ dependencies = [
 package = false
 
 [tool.pytest.ini_options]
-pythonpath = ["."]  # lets tests import `services`, `agents` from the repo root
+pythonpath = ["."]    # lets tests import `services`, `agents` from the repo root
 testpaths = ["tests"]
 
 [dependency-groups]
 dev = [
     "ipykernel>=7.4.0",
+    "pandas-stubs>=3.0.5.260914",
     "pytest>=9.1.1",
     "reportlab>=5.0.1",
     "ruff>=0.16.10",
 ]
+
+[tool.pyright]
+typeCheckingMode = "strict"

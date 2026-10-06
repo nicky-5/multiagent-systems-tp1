@@ -4,6 +4,7 @@ import pandas as pd
 import pytest
 
 from services.pdf_extract import (
+    BBox,
     RawTable,
     Row,
     Table,
@@ -19,7 +20,9 @@ from services.pdf_extract import (
 SAMPLES = Path(__file__).parent.parent / "data" / "sample_pdfs"
 
 
-def raw(page, rows, index=0, last=True, bbox=(0, 100, 500, 300)):
+def raw(
+    page: int, rows: list[Row], index: int = 0, last: bool = True, bbox: BBox = (0, 100, 500, 300)
+) -> RawTable:
     """Small factory so tests only spell out the fields they care about."""
     return RawTable(page=page, index_on_page=index, is_last_on_page=last, bbox=bbox, rows=rows)
 
@@ -33,7 +36,7 @@ def test_split_header_single_row():
 
 
 def test_split_header_two_rows_with_years():
-    rows = [
+    rows: list[Row] = [
         ["", "2023", None],
         ["Región", "Unidades", "Monto"],
         ["Centro", "337.084", "1.303.617,7"],
@@ -52,7 +55,7 @@ def test_split_header_text_only_table_keeps_one_header_row():
 
 
 def test_flatten_header_merged_cells():
-    header = [
+    header: list[Row] = [
         ["", "2023", None, "2024", None],
         ["Región", "Unidades", "Monto", "Unidades", "Monto"],
     ]
@@ -67,7 +70,7 @@ def test_flatten_header_names_empty_and_duplicate_columns():
 
 # --- continuations -----------------------------------------------------------
 
-HEADER = ["Provincia", "Ventas"]
+HEADER: Row = ["Provincia", "Ventas"]
 
 
 def test_merge_continuation_with_repeated_header():
@@ -98,7 +101,7 @@ def test_merge_continuation_without_header():
         raw(2, [["Jujuy", "2,5", "x"]]),  # a different column count
     ],
 )
-def test_not_a_continuation(second):
+def test_not_a_continuation(second: RawTable):
     assert len(merge_continuations([raw(1, [HEADER, ["Salta", "1,5"]]), second])) == 2
 
 
@@ -134,8 +137,8 @@ def test_to_dataframe_types_columns():
 # --- context -----------------------------------------------------------------
 
 
-def block(page, y, text, heading=False):
-    return TextBlock(page=page, bbox=(0, y, 400, y + 12), text=text, is_heading=heading)
+def block(page: int, top: float, text: str, heading: bool = False) -> TextBlock:
+    return TextBlock(page=page, bbox=(0, top, 400, top + 12), text=text, is_heading=heading)
 
 
 def test_collect_context_stops_at_heading_and_tables():
@@ -174,9 +177,9 @@ def test_collect_context_for_table_spanning_pages():
 def test_extract_informe_anual():
     result = extract_tables(SAMPLES / "informe_anual_ferreteria_andina.pdf")
     assert result.warnings == []
-    assert [t.pages for t in result.tables] == [[1], [1], [1, 2]]
+    assert [table.pages for table in result.tables] == [[1], [1], [1, 2]]
 
-    income, regions, provinces = (t.df for t in result.tables)
+    income, regions, provinces = (table.df for table in result.tables)
     assert income.loc[income["Concepto"] == "Costo de ventas", "2022"].item() == -1147248
     assert list(regions.columns)[:3] == ["Región", "2023 Unidades", "2023 Monto (miles ARS)"]
     assert pd.isna(regions.loc[regions["Región"] == "Online", "2023 Unidades"].item())
