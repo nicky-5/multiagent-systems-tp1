@@ -15,7 +15,9 @@ that they don't support.
 - unit: take units from the caption, headers and notes (e.g. "en miles de ARS").
 - description: 2 to 4 sentences covering what is measured, units, period and scope \
 (e.g. which entities the rows cover).
-- Write name and descriptions in the language of the document."""
+- Write name and descriptions in the language of the document's prose (its title, \
+headings, captions and paragraphs). Ignore the language of names inside the cells: \
+an English report about places with Spanish names gets English metadata."""
 
 
 def enrich_user_prompt(table: ExtractedTable, filename: str) -> str:
