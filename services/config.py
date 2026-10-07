@@ -5,7 +5,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from pydantic import SecretStr
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -19,9 +19,18 @@ class Settings(BaseSettings):
     """Each field is filled from the environment variable of the same name
     (case-insensitive). Fields without a default are required."""
 
+    # The value "none" in the environment means None (e.g. LLM_CODE_TEMPERATURE=none)
+    model_config = SettingsConfigDict(env_parse_none_str="none")
+
     litellm_base_url: str
     litellm_api_key: SecretStr  # SecretStr prints as '**********', so it can't leak into logs
     llm_model: str = "gpt-4.1-mini"
+    # Model for the analyst's code generation, the hardest task; empty: llm_model
+    llm_code_model: str | None = None
+    # Sampling temperature of each; "none" doesn't send one (some newer models, e.g.
+    # claude-opus-4-8, reject the parameter)
+    llm_temperature: float | None = 0
+    llm_code_temperature: float | None = 0
     embedding_model: str = "text-embedding-3-small"
     embedding_dimension: int = 1536  # vector size of embedding_model
 
@@ -39,6 +48,8 @@ class Settings(BaseSettings):
     # Analyst: results per Pinecone search, and how many tables the LLM may choose from
     analyst_top_k: int = 5
     analyst_max_candidates: int = 8
+    # How many programs the analyst may write for one question (the first + corrections)
+    analyst_max_code_attempts: int = 3
 
     # Sandbox for the analyst's generated code: wall-clock limit and memory (address space)
     sandbox_timeout_s: float = 30

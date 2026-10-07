@@ -10,15 +10,27 @@ from pydantic import BaseModel
 from services.config import get_settings
 
 
-def chat_model(temperature: float = 0) -> ChatOpenAI:
-    """A chat model behind the proxy. LiteLLM speaks the OpenAI API, so the OpenAI
-    client works for any model it serves (including Claude), only base_url changes."""
+def chat_model() -> ChatOpenAI:
+    """The model for every LLM step except code generation. LiteLLM speaks the OpenAI
+    API, so the OpenAI client works for any model it serves (including Claude); only
+    base_url changes."""
+    settings = get_settings()
+    return _client(settings.llm_model, settings.llm_temperature)
+
+
+def code_model() -> ChatOpenAI:
+    """The model for the analyst's code generation: LLM_CODE_MODEL, or the general one."""
+    settings = get_settings()
+    return _client(settings.llm_code_model or settings.llm_model, settings.llm_code_temperature)
+
+
+def _client(model: str, temperature: float | None) -> ChatOpenAI:
     settings = get_settings()
     return ChatOpenAI(
-        model=settings.llm_model,
+        model=model,
         base_url=settings.openai_base_url,
         api_key=settings.litellm_api_key,
-        temperature=temperature,
+        temperature=temperature,  # None: not sent, the model's default applies
         timeout=60,
         max_retries=2,  # retries transient HTTP errors (rate limits, 5xx)
     )

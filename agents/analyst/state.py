@@ -2,7 +2,13 @@
 
 from typing import TypedDict
 
-from agents.analyst.schemas import Candidate, PartAssessment, QueryPlan, Status
+from agents.analyst.schemas import (
+    Candidate,
+    CodeAttempt,
+    PartAssessment,
+    QueryPlan,
+    Status,
+)
 
 
 class AnalystState(TypedDict):
@@ -25,10 +31,18 @@ class AnalystState(TypedDict):
     # wording, and kept here so tests can check it. Later steps may only lower it.
     status: Status | None
 
+    # Set by generate_code and execute: every program tried, the last one is current.
+    # More than one means the first ones failed and were corrected.
+    attempts: list[CodeAttempt]
+    max_attempts: int
+
+    # Set by respond
+    answer: str
+
     warnings: list[str]
 
 
-def initial_state(question: str) -> AnalystState:
+def initial_state(question: str, max_attempts: int = 3) -> AnalystState:
     return {
         "question": question,
         "plan": None,
@@ -36,5 +50,8 @@ def initial_state(question: str) -> AnalystState:
         "assessments": [],
         "selected_ids": [],
         "status": None,
+        "attempts": [],
+        "max_attempts": max_attempts,
+        "answer": "",
         "warnings": [],
     }

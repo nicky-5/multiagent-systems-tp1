@@ -1,13 +1,20 @@
+from typing import Any
+
 import pytest
 
 from agents.analyst.rules import (
+    apply_result,
     candidate_from_match,
     check_assessments,
+    check_result,
     decide_status,
+    format_value,
+    mark_failed,
     merge_matches,
     selected_table_ids,
+    sources_footer,
 )
-from agents.analyst.schemas import PartAssessment
+from agents.analyst.schemas import Candidate, PartAssessment
 from agents.ingestion.rules import pinecone_metadata
 from agents.ingestion.schemas import ColumnInfo, Source, TableRecord
 from services.vector_store import Match
@@ -96,3 +103,76 @@ def test_candidate_round_trips_through_pinecone_metadata():
     assert candidate.columns == record.columns  # stored as JSON, read back as models
     assert candidate.row_header_column is None  # stored by leaving the key out
     assert candidate.score == 0.8
+
+
+# --- the program's output ------------------------------------------------------------
+
+
+def entry(value: object = 1, missing: str | None = None) -> dict[str, object]:
+    return {"value": value, "unit": "x", "missing": missing}
+
+
+def test_valid_result():
+    assert check_result({"parts": [entry(), entry({"a": [1.5, "b"]})]}, 2) == []
+    assert check_result({"parts": [entry(None, "Rosario no está")]}, 1) == []
+
+
+@pytest.mark.parametrize(
+    ("result", "fragment"),
+    [
+        ({"answer": 1}, 'must have a "parts" list'),
+        ({"parts": [entry()]}, "it must have 2"),
+        ({"parts": [{"value": 1}, entry()]}, 'Part 1 must be an object with the keys'),
+        ({"parts": [entry(None), entry()]}, "Part 1 has no value"),
+        ({"parts": [entry(float("nan")), entry()]}, "NaN or Infinity"),
+        ({"parts": [entry({"Salta": float("inf")}), entry()]}, "NaN or Infinity"),
+    ],
+)
+def test_invalid_result(result: dict[str, Any], fragment: str):
+    assert any(fragment in e for e in check_result(result, 2))
+
+
+def test_apply_result_lowers_parts_reported_missing():
+    parts = [part(True), part(False), part(True)]
+    result = {"parts": [entry(5), entry(None, "Rosario no está")]}  # entries for parts 1 and 3
+    updated = apply_result(parts, result)
+
+    assert [p.answerable for p in updated] == [True, False, False]
+    assert updated[2].missing == "Rosario no está"
+    assert decide_status(updated) == "partial"
+
+
+def test_mark_failed():
+    updated = mark_failed([part(True), part(False)], attempts=3)
+    assert [p.answerable for p in updated] == [False, False]
+    assert updated[0].missing == "The calculation failed after 3 attempts."
+    assert updated[1].missing == "2024 is not available"  # unchanged
+
+
+# --- the answer ----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("value", "language", "text"),
+    [
+        (1234567, "es", "1.234.567"),
+        (1234567, "en", "1,234,567"),
+        (1234.5, "es", "1.234,5"),
+        (0.0864623, "en", "0.0865"),  # up to 4 decimals
+        (2.0, "en", "2"),  # no trailing zeros
+        ({"Salta": 1500.25}, "es", "{Salta: 1.500,25}"),
+        ([1, None, "x"], "en", "[1, null, x]"),
+    ],
+)
+def test_format_value(value: object, language: str, text: str):
+    assert format_value(value, language) == text
+
+
+def test_sources_footer():
+    table = Candidate(
+        table_id="t1", score=0.9, name="Población", description="", filename="anuario.pdf",
+        pages=[3, 4], columns=[], row_header_column=None, row_headers=[], n_rows=1, preview="",
+    )
+    assert sources_footer([table], "es", used=True) == "**Tablas utilizadas:**\n- Población (anuario.pdf, pág. 3, 4)"
+    assert sources_footer([table], "en", used=False) == "**Tables consulted:**\n- Población (anuario.pdf, p. 3, 4)"
+    assert sources_footer([], "en", used=True) == ""

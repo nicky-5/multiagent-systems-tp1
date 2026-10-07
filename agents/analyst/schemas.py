@@ -1,11 +1,11 @@
 """Pydantic models for the analyst agent.
 
-QueryPlan and Selection are LLM outputs (structured output); Candidate is built by
-code from Pinecone results. As in ingestion, Field descriptions are part of the
+QueryPlan, Selection and GeneratedCode are LLM outputs (structured output); Candidate
+and CodeAttempt are built by code. As in ingestion, Field descriptions are part of the
 JSON schema the LLM sees, so they double as instructions.
 """
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -85,3 +85,34 @@ class PartAssessment(BaseModel):
 
 class Selection(BaseModel):
     parts: list[PartAssessment] = Field(description="One assessment per part, in the plan's order.")
+
+
+# --- generate_code / execute -------------------------------------------------------
+
+
+class GeneratedCode(BaseModel):
+    approach: str = Field(
+        description=(
+            "One or two sentences on how the result is computed: tables, filters, formula, "
+            "and any unit conversion (e.g. thousands -> millions). Shown to the user."
+        )
+    )
+    code: str = Field(description="The complete Python program.")
+
+
+class CodeAttempt(BaseModel):
+    """One generated program and what happened when it ran."""
+
+    approach: str
+    code: str
+    stdout: str = ""
+    stderr: str = ""
+    error: str | None = None  # why it failed (run error or invalid output); None if it worked
+    result: dict[str, Any] | None = None  # the JSON the program printed, once validated
+    isolation: list[str] = Field(default_factory=list[str])  # sandbox layers that were active
+
+
+# The program's output, which execute validates (rules.check_result):
+#   {"parts": [{"value": <number, string, list or object>, "unit": "<unit or ''>",
+#               "missing": null or "<what wasn't found in the data>"}, ...]}
+# with one entry per part being computed, in order.

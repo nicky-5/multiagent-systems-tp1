@@ -1,6 +1,11 @@
 """Prompts for the analyst's LLM nodes."""
 
-from agents.analyst.schemas import Candidate, QueryPlan
+from typing import Any
+
+import pandas as pd
+
+from agents.analyst.rules import format_value
+from agents.analyst.schemas import Candidate, PartAssessment, QueryPlan, QuestionPart
 
 MAX_ROW_HEADERS_SHOWN = 60
 
@@ -73,3 +78,120 @@ def _describe(c: Candidate) -> str:
         f"{rows}"
         f"First rows:\n{c.preview}"
     )
+
+
+# --- generate_code -----------------------------------------------------------------
+
+MAX_ERROR_CHARS = 2000
+PREVIEW_ROWS_FOR_CODE = 5
+
+
+def generate_system(packages: dict[str, str]) -> str:
+    """The code generator's instructions. packages is services.sandbox.available_packages():
+    exactly what the sandbox can import, with versions."""
+    available = ", ".join(f"{name} {version}" for name, version in packages.items())
+    return f"""\
+You write a Python program that computes the answer to parts of a question from tables \
+extracted from PDF reports.
+
+Environment:
+- Python 3 with the standard library and only these packages: {available}. Nothing else \
+is installed.
+- Each table is a Parquet file in the current directory, named in the table list. Load it \
+with pandas.read_parquet("<file>"). There's no network and no other file.
+- pandas 3: text columns have the "str" dtype; numeric columns use the nullable "Int64" and \
+"Float64" dtypes, whose missing values are pd.NA (check with pd.isna). Column names are \
+exactly as listed, including spaces, accents and units.
+
+Rules:
+- Use only values loaded from the tables; never type numbers from the preview into the \
+code. Filter rows by their labels exactly as written in the data.
+- Never interpolate, extrapolate, estimate or use outside knowledge (exchange rates, \
+inflation, population). Conversions that need no outside data are fine (thousands -> \
+millions, % <-> fraction, summing all 12 months into a year); mention them in approach.
+- If a value a part needs isn't in the data (a row, column or period not found, or NA), \
+don't guess: put the reason in that part's "missing" and leave "value" null.
+- End by printing exactly one line of JSON, and nothing after it:
+  print(json.dumps({{"parts": [...]}}, ensure_ascii=False))
+  with one entry per part, in the given order: {{"value": ..., "unit": "...", "missing": null}}.
+  value may be a number, string, list or object (e.g. {{"Salta": 1.5, "Jujuy": 2.1}}). \
+Convert numpy and pandas values to plain Python first (int(...), float(...), .tolist()), \
+and round to a sensible precision.
+- You may print intermediate values on earlier lines; they're shown to the user."""
+
+
+def generate_user_prompt(
+    question: str, parts: list[QuestionPart], tables: list[tuple[Candidate, pd.DataFrame]]
+) -> str:
+    lines = [f"Question: {question}", "", "Compute these parts, in this order:"]
+    for i, p in enumerate(parts, start=1):
+        lines.append(
+            f"{i}. {p.question} (metrics: {p.metrics}; entities: {p.entities}; "
+            f"periods: {p.periods}; operation: {p.operation})"
+        )
+    lines += ["", "Tables:"]
+    for candidate, df in tables:
+        units = {c.name: c.unit for c in candidate.columns}
+        columns = "\n".join(
+            f"  - {name!r}: dtype {dtype}, unit {units.get(str(name), '?')}" for name, dtype in df.dtypes.items()
+        )
+        lines += [
+            "",
+            f"File: {candidate.table_id}.parquet",
+            f"Name: {candidate.name} ({len(df)} rows)",
+            f"Description: {candidate.description}",
+            f"Columns:\n{columns}",
+            f"First rows:\n{df.head(PREVIEW_ROWS_FOR_CODE).to_markdown(index=False)}",
+        ]
+        if candidate.row_header_column:
+            labels = df[candidate.row_header_column].dropna().astype(str).unique().tolist()
+            lines.append(f"All values of {candidate.row_header_column!r}: {', '.join(labels)}")
+    return "\n".join(lines)
+
+
+
+def code_retry_prompt(previous_code: str, error: str) -> str:
+    # Tracebacks of pandas errors are long; the end has the line in main.py and the error
+    tail = error if len(error) <= MAX_ERROR_CHARS else "...\n" + error[-MAX_ERROR_CHARS:]
+    return (
+        f"Your previous program was:\n```python\n{previous_code}\n```\n\n"
+        f"It failed:\n{tail}\n\nWrite a corrected program."
+    )
+
+
+# --- respond -----------------------------------------------------------------------
+
+RESPOND_SYSTEM = """\
+You write the final answer to a user's question about tables from PDF reports, from \
+results that were already computed. You don't compute anything yourself.
+
+- Answer in the language given. Be brief: the result first, then one or two sentences on \
+how it was computed (from "approach"), including any unit conversion.
+- Use only numbers from the computed results, copied as written (they're already \
+formatted for the answer's language), with their units. You may round them or express a \
+fraction as a percentage. Don't add numbers, estimates or outside knowledge.
+- For each part that couldn't be answered, say so and what's missing, using the reason \
+given (it may say what a related table does contain).
+- If nothing could be answered, give no numeric result at all.
+- Don't list sources or table names at the end; they're added automatically."""
+
+
+def respond_user_prompt(
+    question: str,
+    language: str,
+    parts: list[PartAssessment],
+    approach: str | None,
+    result_parts: list[dict[str, Any]],
+) -> str:
+    lines = [f"Question: {question}", f"Language: {'Spanish' if language == 'es' else 'English'}", ""]
+    results = iter(result_parts)
+    for i, part in enumerate(parts, start=1):
+        if part.answerable:
+            r = next(results)
+            value = format_value(r["value"], language)
+            lines.append(f"Part {i}: {part.question}\n  Result: {value} {r['unit']}")
+        else:
+            lines.append(f"Part {i}: {part.question}\n  Not answerable: {part.missing}")
+    if approach:
+        lines += ["", f"Approach: {approach}"]
+    return "\n".join(lines)

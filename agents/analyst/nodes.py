@@ -5,10 +5,17 @@ from typing import Any
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
 from agents.analyst import prompts, rules
-from agents.analyst.schemas import PartAssessment, QueryPlan, Selection
+from agents.analyst.schemas import (
+    CodeAttempt,
+    GeneratedCode,
+    PartAssessment,
+    QueryPlan,
+    Selection,
+)
 from agents.analyst.state import AnalystState
 from services.config import get_settings
-from services.llm import chat_model, embeddings, with_schema
+from services.llm import chat_model, code_model, embeddings, with_schema
+from services.sandbox import available_packages, run_python
 from services.table_store import table_store
 from services.vector_store import vector_store
 
@@ -74,3 +81,99 @@ def select(state: AnalystState) -> dict[str, Any]:
         "selected_ids": rules.selected_table_ids(parts),
         "status": rules.decide_status(parts),
     }
+
+
+def generate_code(state: AnalystState) -> dict[str, Any]:
+    """Write a program that computes the answerable parts; on a retry, fix the last one."""
+    plan = state["plan"]
+    assert plan is not None
+    # The parts to compute: those select judged answerable, with their planned details
+    answerable = [p.answerable for p in state["assessments"]]
+    parts = [part for part, ok in zip(plan.parts, answerable, strict=False) if ok]
+
+    # The real column names and dtypes come from the data itself, not from metadata
+    store = table_store()
+    by_id = {c.table_id: c for c in state["candidates"]}
+    tables = [(by_id[i], store.load_df(i)) for i in state["selected_ids"]]
+
+    messages: list[BaseMessage] = [
+        SystemMessage(prompts.generate_system(available_packages())),
+        HumanMessage(prompts.generate_user_prompt(state["question"], parts, tables)),
+    ]
+    attempts = state["attempts"]
+    if attempts and attempts[-1].error:  # a retry: show the failed program and its error
+        messages.append(HumanMessage(prompts.code_retry_prompt(attempts[-1].code, attempts[-1].error)))
+
+    generated = with_schema(code_model(), GeneratedCode).invoke(messages)  # LLM_CODE_MODEL
+    attempt = CodeAttempt(approach=generated.approach, code=generated.code)
+    return {"attempts": [*attempts, attempt]}
+
+
+def execute(state: AnalystState) -> dict[str, Any]:
+    """Run the latest program in the sandbox and check its output (no LLM).
+
+    A valid result may still report data as missing; those parts become unanswerable
+    and the status is decided again. After the last failed attempt, nothing could be
+    computed.
+    """
+    attempts = state["attempts"]
+    store = table_store()
+    files = {f"{i}.parquet": store.data_path(i) for i in state["selected_ids"]}
+    run = run_python(attempts[-1].code, files)
+
+    error = run.error
+    if error is None:
+        assert run.result is not None
+        n_parts = sum(p.answerable for p in state["assessments"])
+        problems = rules.check_result(run.result, n_parts)
+        if problems:
+            error = "The program ran, but its output is invalid:\n- " + "\n- ".join(problems)
+
+    attempt = attempts[-1].model_copy(update={
+        "stdout": run.stdout,
+        "stderr": run.stderr,
+        "error": error,
+        "result": run.result if error is None else None,
+        "isolation": run.isolation,
+    })
+    update: dict[str, Any] = {"attempts": [*attempts[:-1], attempt]}
+
+    if error is None:
+        assert run.result is not None
+        parts = rules.apply_result(state["assessments"], run.result)
+        update |= {"assessments": parts, "status": rules.decide_status(parts)}
+    elif len(attempts) >= state["max_attempts"]:
+        parts = rules.mark_failed(state["assessments"], len(attempts))
+        update |= {"assessments": parts, "status": rules.decide_status(parts)}
+    return update
+
+
+def respond(state: AnalystState) -> dict[str, Any]:
+    """Write the answer from the computed results and the assessments, then cite the
+    tables (the citation is added by code, so it's exact)."""
+    plan = state["plan"]
+    assert plan is not None
+    parts = state["assessments"]
+
+    # What was computed: the last program's valid result, if any part is still answerable
+    approach: str | None = None
+    computed: list[dict[str, Any]] = []
+    last = state["attempts"][-1] if state["attempts"] else None
+    if last is not None and last.result is not None and any(p.answerable for p in parts):
+        approach = last.approach
+        # Entries of the parts still answerable (the others reported data as missing)
+        computed = [r for r in last.result["parts"] if r["missing"] is None]
+
+    messages: list[BaseMessage] = [
+        SystemMessage(prompts.RESPOND_SYSTEM),
+        HumanMessage(prompts.respond_user_prompt(state["question"], plan.language, parts, approach, computed)),
+    ]
+    text = chat_model().invoke(messages).text.strip()
+
+    # Cite the tables the result came from; when nothing was computed, the related
+    # tables the explanation refers to
+    by_id = {c.table_id: c for c in state["candidates"]}
+    used = bool(computed)
+    cited = state["selected_ids"] if used else list(dict.fromkeys(i for p in parts for i in p.table_ids))
+    footer = rules.sources_footer([by_id[i] for i in cited if i in by_id], plan.language, used=used)
+    return {"answer": f"{text}\n\n{footer}".strip()}
