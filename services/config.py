@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     analyst_top_k: int = 5
     analyst_max_candidates: int = 8
 
+    # Sandbox for the analyst's generated code: wall-clock limit and memory (address space)
+    sandbox_timeout_s: float = 30
+    sandbox_memory_mb: int = 1024
+
     data_dir: Path = ROOT / "data"
 
     @property

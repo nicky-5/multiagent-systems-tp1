@@ -45,3 +45,8 @@ dev = [
 
 [tool.pyright]
 typeCheckingMode = "strict"
+# sandbox/launcher.py runs with the sandbox's own environment (sandbox/.venv), so its
+# imports resolve against that environment's packages
+executionEnvironments = [
+    { root = "sandbox", extraPaths = ["sandbox/.venv/lib/python3.14/site-packages"] },
+]
