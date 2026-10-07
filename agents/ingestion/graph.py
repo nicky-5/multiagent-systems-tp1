@@ -19,6 +19,8 @@ Try it from the command line:
 
 import sys
 import time
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
@@ -92,11 +94,26 @@ def run_config(pdf_path: str) -> RunnableConfig:
     }
 
 
-if __name__ == "__main__":
-    pdf_path = sys.argv[1]
-    graph = build_graph()
+# Called with (source, message) as ingestion progresses; source is "extract", "index"
+# or a table's label such as "table 2/3 (p. [1])"
+ProgressCallback = Callable[[str, str], None]
+
+
+@dataclass
+class IngestionOutcome:
+    filename: str
+    records: list[TableRecord]  # the tables indexed, sorted by table_id
+    warnings: list[str]  # what was skipped, to show to the user
+
+
+def _no_progress(source: str, message: str) -> None:
+    pass
+
+
+def ingest(pdf_path: str, on_progress: ProgressCallback | None = None) -> IngestionOutcome:
+    """Run the ingestion graph on one PDF, reporting progress as it goes."""
+    report = on_progress or _no_progress
     state = initial_state(pdf_path, get_settings().ingest_max_attempts)
-    started = time.perf_counter()
     records: list[TableRecord] = []
     warnings: list[str] = []
 
@@ -104,28 +121,34 @@ if __name__ == "__main__":
     # yields the progress events nodes emit. subgraphs=True includes events from
     # inside the subgraphs. Each item is then (namespace, mode, data); namespace is
     # () for the parent graph and identifies the branch for subgraph events.
-    # The Streamlit UI will use the same loop to show progress.
-    for _namespace, mode, data in graph.stream(
-        state,
-        run_config(pdf_path),
-        stream_mode=["updates", "custom"],
-        subgraphs=True,
+    for _namespace, mode, data in build_graph().stream(
+        state, run_config(pdf_path), stream_mode=["updates", "custom"], subgraphs=True
     ):
-        elapsed = f"{time.perf_counter() - started:5.1f}s"
         if mode == "custom":
             event = cast(dict[str, str], data)
-            print(f"{elapsed} [{event['table']}] {event['message']}")
+            report(event["table"], event["message"])
             continue
         for node, node_update in cast(dict[str, dict[str, Any] | None], data).items():
             update = node_update or {}
             if node == "extract":
-                print(f"{elapsed} [extract] {len(update['tables'])} tables found")
+                warnings += update["warnings"]
+                report("extract", f"{len(update['tables'])} table(s) found")
             elif node == "process_table":  # a branch finished; its output reaches the parent
                 records += update.get("records", [])
                 warnings += update.get("warnings", [])
             elif node == "index":
-                print(f"{elapsed} [index] saved and upserted {len(update['indexed'])} tables")
+                report("index", f"saved and indexed {len(update['indexed'])} table(s)")
 
-    print(f"\n{len(records)} records, warnings: {warnings}")
-    for record in records:
+    records.sort(key=lambda r: r.table_id)
+    return IngestionOutcome(filename=Path(pdf_path).name, records=records, warnings=warnings)
+
+
+if __name__ == "__main__":
+    started = time.perf_counter()
+    outcome = ingest(
+        sys.argv[1],
+        lambda source, message: print(f"{time.perf_counter() - started:5.1f}s [{source}] {message}"),
+    )
+    print(f"\n{len(outcome.records)} records, warnings: {outcome.warnings}")
+    for record in outcome.records:
         print(f"- {record.table_id}: {record.name!r}\n  {record.description}")

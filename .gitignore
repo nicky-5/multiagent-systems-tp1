@@ -220,3 +220,6 @@ __marimo__/
 .streamlit/secrets.toml
 # Table store written by the ingestion agent
 data/tables/
+
+# PDFs uploaded through the UI
+data/uploads/

@@ -106,9 +106,15 @@ exactly as listed, including spaces, accents and units.
 Rules:
 - Use only values loaded from the tables; never type numbers from the preview into the \
 code. Filter rows by their labels exactly as written in the data.
+- When a table already reports the figure asked for (e.g. a share or change column), \
+read it instead of recomputing it: the report's own figure is the source.
 - Never interpolate, extrapolate, estimate or use outside knowledge (exchange rates, \
 inflation, population). Conversions that need no outside data are fine (thousands -> \
 millions, % <-> fraction, summing all 12 months into a year); mention them in approach.
+- Report results in readable units: when a ratio or conversion yields a small or awkward \
+figure (e.g. 0.164 thousands of ARS per resident), express it in a unit that reads \
+naturally (164 ARS per resident) and say so in approach. Keep percentages as percentages \
+(8.65 with unit "%"), not fractions.
 - If a value a part needs isn't in the data (a row, column or period not found, or NA), \
 don't guess: put the reason in that part's "missing" and leave "value" null.
 - End by printing exactly one line of JSON, and nothing after it:

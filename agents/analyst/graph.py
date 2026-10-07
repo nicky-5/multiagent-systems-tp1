@@ -14,7 +14,9 @@ Try it from the command line:
 
 import json
 import sys
-from typing import cast
+from collections.abc import Callable
+from typing import Any, cast
+from uuid import UUID
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
@@ -22,6 +24,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import RetryPolicy
 
 from agents.analyst import edges, nodes
+from agents.analyst.schemas import CodeAttempt, QueryPlan
 from agents.analyst.state import AnalystState, initial_state
 from services.config import get_settings
 
@@ -51,16 +54,83 @@ def build_graph() -> CompiledStateGraph[AnalystState, None, AnalystState, Analys
     return graph.compile()
 
 
-def run_config(question: str) -> RunnableConfig:
-    return {"run_name": "analyst", "tags": ["analyst"], "metadata": {"question": question}}
+def run_config(
+    question: str, run_id: UUID | None = None, metadata: dict[str, str] | None = None
+) -> RunnableConfig:
+    """How the run appears in LangSmith. run_id becomes the trace's id, so a caller can
+    find the trace afterwards (the evaluation script does)."""
+    config: RunnableConfig = {
+        "run_name": "analyst",
+        "tags": ["analyst"],
+        "metadata": {"question": question, **(metadata or {})},
+    }
+    if run_id is not None:
+        config["run_id"] = run_id
+    return config
+
+
+# Called with (node, message) after each step of the graph
+ProgressCallback = Callable[[str, str], None]
+
+
+def _no_progress(node: str, message: str) -> None:
+    pass
+
+
+def ask(
+    question: str,
+    on_progress: ProgressCallback | None = None,
+    *,
+    run_id: UUID | None = None,
+    metadata: dict[str, str] | None = None,
+) -> AnalystState:
+    """Run the analyst graph on a question, reporting each step; returns the final state.
+
+    run_id and metadata are passed on to LangSmith (see run_config)."""
+    report = on_progress or _no_progress
+    state = initial_state(question, get_settings().analyst_max_code_attempts)
+    final = state
+    # "values" yields the whole state after each step (the last one is the result);
+    # "updates" yields what each node changed, to describe the step
+    for mode, data in build_graph().stream(
+        state, run_config(question, run_id, metadata), stream_mode=["updates", "values"]
+    ):
+        if mode == "values":
+            final = cast(AnalystState, data)
+        else:
+            for node, update in cast(dict[str, dict[str, Any] | None], data).items():
+                report(node, describe_step(node, update or {}))
+    return final
+
+
+def describe_step(node: str, update: dict[str, Any]) -> str:
+    """One line on what a node just did, for progress displays."""
+    match node:
+        case "understand":
+            plan = cast(QueryPlan, update["plan"])
+            return f"{len(plan.parts)} part(s); searching for {len(plan.searches)} dataset(s)"
+        case "retrieve":
+            return f"{len(update['candidates'])} candidate table(s) found"
+        case "select":
+            return f"{len(update['selected_ids'])} table(s) selected; status: {update['status']}"
+        case "generate_code":
+            return f"program {len(update['attempts'])} written"
+        case "execute":
+            last = cast(list[CodeAttempt], update["attempts"])[-1]
+            if last.error is None:
+                return "program ran; result is valid"
+            return f"program failed: {last.error.splitlines()[0]}"
+        case "respond":
+            return "answer written"
+        case _:
+            return "done"
 
 
 if __name__ == "__main__":
     question = sys.argv[1]
-    state_in = initial_state(question, get_settings().analyst_max_code_attempts)
-    state = cast(AnalystState, build_graph().invoke(state_in, run_config(question)))
+    state = ask(question, lambda node, message: print(f"[{node}] {message}"))
 
-    print(f"Question: {question}\n\nAssessment:")
+    print("\nAssessment:")
     for a in state["assessments"]:
         verdict = "answerable" if a.answerable else f"NOT answerable: {a.missing}"
         print(f"  - {a.question}\n    tables {a.table_ids}; {verdict}")
