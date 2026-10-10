@@ -109,6 +109,13 @@ def check_result(result: dict[str, Any], n_parts: int) -> list[str]:
         part = cast(dict[str, object], entry)
         if part["missing"] is None and part["value"] is None:
             errors.append(f'Part {i} has no value; if the data isn\'t there, explain it in "missing".')
+        # A unit belongs to a number: a name with a unit means the number was left out
+        if isinstance(part["value"], str) and part["unit"]:
+            errors.append(
+                f'Part {i}\'s value is text ({part["value"]!r}) but its unit is {part["unit"]!r}, '
+                "so its number is missing. Report the entity with its value as an object, "
+                'e.g. {"Formosa": 165.43}, or use unit "" if the answer is only text.'
+            )
     if _has_non_finite(result):
         errors.append(
             "The result contains NaN or Infinity, which usually means a value wasn't found "

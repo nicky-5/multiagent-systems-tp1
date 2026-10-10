@@ -25,7 +25,10 @@ class ColumnInfo(BaseModel):
 class TableMetadata(BaseModel):
     name: str = Field(description="Short human-readable table name, at most 80 characters.")
     description: str = Field(
-        description="2 to 4 sentences: what the table measures, units, period and scope."
+        description=(
+            "2 to 4 sentences: what the table measures, units, period and scope "
+            "(e.g. which entities the rows cover)."
+        )
     )
     columns: list[ColumnInfo] = Field(description="One entry per column, in the given order.")
     row_header_column: str | None = Field(

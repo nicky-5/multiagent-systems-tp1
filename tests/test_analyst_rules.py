@@ -115,6 +115,7 @@ def entry(value: object = 1, missing: str | None = None) -> dict[str, object]:
 def test_valid_result():
     assert check_result({"parts": [entry(), entry({"a": [1.5, "b"]})]}, 2) == []
     assert check_result({"parts": [entry(None, "Rosario no está")]}, 1) == []
+    assert check_result({"parts": [{"value": "Formosa", "unit": "", "missing": None}]}, 1) == []
 
 
 @pytest.mark.parametrize(
@@ -126,6 +127,7 @@ def test_valid_result():
         ({"parts": [entry(None), entry()]}, "Part 1 has no value"),
         ({"parts": [entry(float("nan")), entry()]}, "NaN or Infinity"),
         ({"parts": [entry({"Salta": float("inf")}), entry()]}, "NaN or Infinity"),
+        ({"parts": [entry("Formosa"), entry()]}, "so its number is missing"),
     ],
 )
 def test_invalid_result(result: dict[str, Any], fragment: str):

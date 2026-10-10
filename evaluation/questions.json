@@ -1,0 +1,228 @@
+[
+  {
+    "id": "Q01",
+    "question": "¿Cuántos turistas internacionales llegaron en julio de 2024?",
+    "categories": [
+      "single table",
+      "lookup",
+      "table continued on next page"
+    ],
+    "expected_status": "answered",
+    "expected_answer": "701.973 turistas internacionales.",
+    "expected_values": [
+      701973
+    ],
+    "expected_text": [],
+    "expected_tables": [
+      {
+        "file": "provincial_statistics_yearbook.pdf",
+        "table": "p1-t1"
+      }
+    ]
+  },
+  {
+    "id": "Q02",
+    "question": "What was the total number of international tourist arrivals in 2024, and how much did it grow compared to 2023?",
+    "categories": [
+      "single table",
+      "aggregation (sum of 12 months)",
+      "growth rate",
+      "two parts"
+    ],
+    "expected_status": "answered",
+    "expected_answer": "8,427,032 arrivals in 2024; +8.65% over 2023 (7,756,398).",
+    "expected_values": [
+      8427032,
+      8.65
+    ],
+    "expected_text": [],
+    "expected_tables": [
+      {
+        "file": "provincial_statistics_yearbook.pdf",
+        "table": "p1-t1"
+      }
+    ]
+  },
+  {
+    "id": "Q03",
+    "question": "¿Qué provincia tuvo las mayores ventas netas de Ferretería Andina en 2024 y qué participación tuvo sobre el total?",
+    "categories": [
+      "single table",
+      "ranking",
+      "Spanish number format",
+      "table continued on next page"
+    ],
+    "expected_status": "answered",
+    "expected_answer": "La Rioja, con el 7,5 % de las ventas provinciales (columna Participación; recalcularlo da 7,45 %, también aceptable).",
+    "expected_values": [
+      [
+        7.5,
+        7.45
+      ]
+    ],
+    "expected_text": [
+      "La Rioja"
+    ],
+    "expected_tables": [
+      {
+        "file": "informe_anual_ferreteria_andina.pdf",
+        "table": "p1-t2"
+      }
+    ]
+  },
+  {
+    "id": "Q04",
+    "question": "What was Ferretería Andina's net income in 2024, and by what percentage did it change compared with 2022?",
+    "categories": [
+      "single table",
+      "negative values in parentheses",
+      "growth rate",
+      "two parts"
+    ],
+    "expected_status": "answered",
+    "expected_answer": "597,850 thousand ARS in 2024; +104.15% over 2022 (292,852 thousand ARS).",
+    "expected_values": [
+      597850,
+      104.15
+    ],
+    "expected_text": [],
+    "expected_tables": [
+      {
+        "file": "informe_anual_ferreteria_andina.pdf",
+        "table": "p1-t0"
+      }
+    ]
+  },
+  {
+    "id": "Q05",
+    "question": "Using each province's 2023 population, what were Ferretería Andina's 2024 net sales per resident in Córdoba?",
+    "categories": [
+      "multi-table",
+      "tables from two PDFs",
+      "unit conversion (thousands of ARS)"
+    ],
+    "expected_status": "answered",
+    "expected_answer": "About 162.02 ARS per resident (423,411.5 thousand ARS / 2,613,270 residents).",
+    "expected_values": [
+      162.02
+    ],
+    "expected_text": [],
+    "expected_tables": [
+      {
+        "file": "informe_anual_ferreteria_andina.pdf",
+        "table": "p1-t2"
+      },
+      {
+        "file": "provincial_statistics_yearbook.pdf",
+        "table": "p1-t0"
+      }
+    ]
+  },
+  {
+    "id": "Q06",
+    "question": "¿Qué provincia tuvo las mayores ventas netas de Ferretería Andina por habitante en 2024, usando la población de 2023?",
+    "categories": [
+      "multi-table",
+      "tables from two PDFs",
+      "join on province names",
+      "ranking"
+    ],
+    "expected_status": "answered",
+    "expected_answer": "Formosa (unos 165,43 ARS por habitante, seguida de Salta con 163,86).",
+    "expected_values": [],
+    "expected_text": [
+      "Formosa"
+    ],
+    "expected_tables": [
+      {
+        "file": "informe_anual_ferreteria_andina.pdf",
+        "table": "p1-t2"
+      },
+      {
+        "file": "provincial_statistics_yearbook.pdf",
+        "table": "p1-t0"
+      }
+    ]
+  },
+  {
+    "id": "Q07",
+    "question": "What was Salta's population in 2023, and how many international tourists arrived in 2025?",
+    "categories": [
+      "missing period",
+      "two parts"
+    ],
+    "expected_status": "partial",
+    "expected_answer": "2,246,894 residents in 2023. Tourist arrivals for 2025 are not available: the table covers 2023-2024.",
+    "expected_values": [
+      2246894
+    ],
+    "expected_text": [],
+    "expected_tables": [
+      {
+        "file": "provincial_statistics_yearbook.pdf",
+        "table": "p1-t0"
+      }
+    ]
+  },
+  {
+    "id": "Q08",
+    "question": "¿Cuál fue la población de Mendoza en 2024?",
+    "categories": [
+      "missing period"
+    ],
+    "expected_status": "cannot_answer",
+    "expected_answer": "No disponible: la tabla de población cubre 2022 y 2023; 2024 no figura.",
+    "expected_values": [],
+    "expected_text": [],
+    "expected_tables": []
+  },
+  {
+    "id": "Q09",
+    "question": "¿Cuánto vendió Ferretería Andina en Salta en 2024, expresado en dólares?",
+    "categories": [
+      "conversion needs outside data (exchange rate)"
+    ],
+    "expected_status": "cannot_answer",
+    "expected_answer": "No se puede: las ventas están en miles de ARS y ninguna tabla tiene un tipo de cambio.",
+    "expected_values": [],
+    "expected_text": [],
+    "expected_tables": []
+  },
+  {
+    "id": "Q10",
+    "question": "¿Cuál es la tasa de desempleo en Rosario?",
+    "categories": [
+      "no related table"
+    ],
+    "expected_status": "cannot_answer",
+    "expected_answer": "No se puede: ninguna tabla indexada trata sobre desempleo.",
+    "expected_values": [],
+    "expected_text": [],
+    "expected_tables": []
+  },
+  {
+    "id": "Q11",
+    "question": "By how much did the units Ferretería Andina sold in Patagonia in 2024 exceed the national average?",
+    "categories": [
+      "missing comparison value"
+    ],
+    "expected_status": "cannot_answer",
+    "expected_answer": "Not answerable: no table reports a national average, and averaging the listed regions would substitute a value the question doesn't define.",
+    "expected_values": [],
+    "expected_text": [],
+    "expected_tables": []
+  },
+  {
+    "id": "Q12",
+    "question": "¿Cuántas unidades vendió el canal Online en 2023?",
+    "categories": [
+      "missing value (empty cell)",
+      "merged header cells"
+    ],
+    "expected_status": "cannot_answer",
+    "expected_answer": "No disponible: la celda está vacía porque el canal Online empezó a operar en marzo de 2024.",
+    "expected_values": [],
+    "expected_text": [],
+    "expected_tables": []
+  }
+]

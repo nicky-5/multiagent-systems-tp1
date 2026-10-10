@@ -1,0 +1,148 @@
+[
+  {
+    "id": "Q01",
+    "question": "¿Cuántos turistas internacionales llegaron en julio de 2024?",
+    "expected_status": "answered",
+    "status": "answered",
+    "correct": true,
+    "attempts": 1,
+    "notes": [],
+    "answer": "En julio de 2024 llegaron 701.973 turistas internacionales. Este dato se obtuvo filtrando la tabla de llegadas internacionales por mes para el año 2024 y el mes de julio, tomando el valor directamente de la columna de llegadas en personas.\n\n**Tablas utilizadas:**\n- International tourist arrivals by month, 2023-2024 (provincial_statistics_yearbook.pdf, pág. 1, 2)",
+    "run_id": "c21114b3-86f9-4873-87cf-aa1ffa00d824",
+    "error": null
+  },
+  {
+    "id": "Q02",
+    "question": "What was the total number of international tourist arrivals in 2024, and how much did it grow compared to 2023?",
+    "expected_status": "answered",
+    "status": "answered",
+    "correct": true,
+    "attempts": 1,
+    "notes": [],
+    "answer": "The total number of international tourist arrivals in 2024 was 8,427,032 persons. This represents a growth of 8.65% compared to 2023. The growth was calculated by comparing the summed arrivals for all months in 2024 to those in 2023.\n\n**Tables used:**\n- International tourist arrivals by month, 2023-2024 (provincial_statistics_yearbook.pdf, p. 1, 2)",
+    "run_id": "9d13a333-800d-4a8d-809b-cdef01eacfed",
+    "error": null
+  },
+  {
+    "id": "Q03",
+    "question": "¿Qué provincia tuvo las mayores ventas netas de Ferretería Andina en 2024 y qué participación tuvo sobre el total?",
+    "expected_status": "answered",
+    "status": "answered",
+    "correct": true,
+    "attempts": 1,
+    "notes": [],
+    "answer": "La provincia con las mayores ventas netas de Ferretería Andina en 2024 fue La Rioja con 584.272.700 ARS, y su participación sobre el total fue del 7,45 %. Esto se determinó comparando las ventas netas provinciales y calculando la proporción respecto al total nacional.\n\n**Tablas utilizadas:**\n- Ventas netas por provincia, ejercicio 2024 (informe_anual_ferreteria_andina.pdf, pág. 1, 2)",
+    "run_id": "dc7c02c4-6db7-4b35-979f-0e706018fea0",
+    "error": null
+  },
+  {
+    "id": "Q04",
+    "question": "What was Ferretería Andina's net income in 2024, and by what percentage did it change compared with 2022?",
+    "expected_status": "answered",
+    "status": "answered",
+    "correct": true,
+    "attempts": 1,
+    "notes": [
+      "597850.0: same value x1000 (a 1000-times smaller unit, e.g. ARS instead of thousands)"
+    ],
+    "answer": "Ferretería Andina's net income in 2024 was 597,850,000 ARS, which represents a 104.15% increase compared with 2022. This was calculated by extracting net income values for 2022 and 2024 from the income statement and computing the percentage change.\n\n**Tables used:**\n- Estado de resultados consolidado (informe_anual_ferreteria_andina.pdf, p. 1)",
+    "run_id": "5eec9d33-e4ce-48a1-b89d-c7f630cf5d97",
+    "error": null
+  },
+  {
+    "id": "Q05",
+    "question": "Using each province's 2023 population, what were Ferretería Andina's 2024 net sales per resident in Córdoba?",
+    "expected_status": "answered",
+    "status": "answered",
+    "correct": true,
+    "attempts": 1,
+    "notes": [],
+    "answer": "Ferretería Andina's 2024 net sales per resident in Córdoba were 162.02 ARS per resident. This was computed by dividing the 2024 net sales in Córdoba (in thousands of ARS) by the 2023 population of Córdoba.\n\n**Tables used:**\n- Ventas netas por provincia, ejercicio 2024 (informe_anual_ferreteria_andina.pdf, p. 1, 2)\n- Resident population by province, 2022-2023 (provincial_statistics_yearbook.pdf, p. 1)",
+    "run_id": "cc966623-21ed-4cf9-a67a-1cf24e134f98",
+    "error": null
+  },
+  {
+    "id": "Q06",
+    "question": "¿Qué provincia tuvo las mayores ventas netas de Ferretería Andina por habitante en 2024, usando la población de 2023?",
+    "expected_status": "answered",
+    "status": "answered",
+    "correct": true,
+    "attempts": 1,
+    "notes": [],
+    "answer": "La provincia con las mayores ventas netas de Ferretería Andina por habitante en 2024, usando la población de 2023, fue Formosa con 165,43 ARS por habitante. Esto se calculó dividiendo las ventas netas de 2024 por la población de 2023 y ajustando la unidad a ARS por habitante.\n\n**Tablas utilizadas:**\n- Ventas netas por provincia, ejercicio 2024 (informe_anual_ferreteria_andina.pdf, pág. 1, 2)\n- Resident population by province, 2022-2023 (provincial_statistics_yearbook.pdf, pág. 1)",
+    "run_id": "2ec3cd55-5117-446f-9c91-74bb4c162cdd",
+    "error": null
+  },
+  {
+    "id": "Q07",
+    "question": "What was Salta's population in 2023, and how many international tourists arrived in 2025?",
+    "expected_status": "partial",
+    "status": "partial",
+    "correct": true,
+    "attempts": 1,
+    "notes": [],
+    "answer": "Salta's population in 2023 was 2,246,894 persons. The number of international tourists arriving in 2025 is not available, as the data only covers 2023 and 2024.\n\n**Tables used:**\n- Resident population by province, 2022-2023 (provincial_statistics_yearbook.pdf, p. 1)",
+    "run_id": "d1153434-1587-42f9-a139-988231094797",
+    "error": null
+  },
+  {
+    "id": "Q08",
+    "question": "¿Cuál fue la población de Mendoza en 2024?",
+    "expected_status": "cannot_answer",
+    "status": "cannot_answer",
+    "correct": true,
+    "attempts": 0,
+    "notes": [],
+    "answer": "No es posible responder a la población de Mendoza en 2024 porque la tabla de población solo cubre los años 2022-2023.\n\n**Tablas consultadas:**\n- Resident population by province, 2022-2023 (provincial_statistics_yearbook.pdf, pág. 1)",
+    "run_id": "3acd8461-495d-412b-b5c5-a69cecc0248e",
+    "error": null
+  },
+  {
+    "id": "Q09",
+    "question": "¿Cuánto vendió Ferretería Andina en Salta en 2024, expresado en dólares?",
+    "expected_status": "cannot_answer",
+    "status": "cannot_answer",
+    "correct": true,
+    "attempts": 0,
+    "notes": [],
+    "answer": "No es posible responder cuánto vendió Ferretería Andina en Salta en 2024 expresado en dólares, porque no se dispone de la tasa de cambio necesaria para convertir las ventas de pesos argentinos a dólares.\n\n**Tablas consultadas:**\n- Ventas netas por provincia, ejercicio 2024 (informe_anual_ferreteria_andina.pdf, pág. 1, 2)",
+    "run_id": "315f811c-8121-4464-828a-b6d0a4420fff",
+    "error": null
+  },
+  {
+    "id": "Q10",
+    "question": "¿Cuál es la tasa de desempleo en Rosario?",
+    "expected_status": "cannot_answer",
+    "status": "cannot_answer",
+    "correct": true,
+    "attempts": 0,
+    "notes": [],
+    "answer": "No es posible responder a la pregunta porque no hay datos sobre la tasa de desempleo en Rosario en las tablas disponibles, que se centran en pobreza e indigencia.\n\n**Tablas consultadas:**\n- Incidencia de la pobreza y la indigencia en 31 aglomerados urbanos (eph_pobreza_09_2670733F4C4D.pdf, pág. 8)\n- Incidencia de la pobreza y la indigencia en 31 aglomerados urbanos (eph_pobreza_09_2670733F4C4D.pdf, pág. 9, 10)\n- Proporción de hogares y personas pobres e indigentes por área geográfica (eph_pobreza_09_2670733F4C4D.pdf, pág. 9)\n- Incidencia de pobreza e indigencia por edad y sexo (eph_pobreza_09_2670733F4C4D.pdf, pág. 13)\n- Incidencia de pobreza e indigencia en 31 aglomerados urbanos (eph_pobreza_09_2670733F4C4D.pdf, pág. 5)",
+    "run_id": "33037a24-0a2a-4163-92c4-489b088dc2ef",
+    "error": null
+  },
+  {
+    "id": "Q11",
+    "question": "By how much did the units Ferretería Andina sold in Patagonia in 2024 exceed the national average?",
+    "expected_status": "cannot_answer",
+    "status": "cannot_answer",
+    "correct": true,
+    "attempts": 0,
+    "notes": [],
+    "answer": "This cannot be answered because the national average units sold in 2024 are not available in the data.\n\n**Tables consulted:**\n- Unidades vendidas y facturación por región, 2023-2024 (informe_anual_ferreteria_andina.pdf, p. 1)",
+    "run_id": "bc949332-4404-4da0-9c54-a7cd7e19da7d",
+    "error": null
+  },
+  {
+    "id": "Q12",
+    "question": "¿Cuántas unidades vendió el canal Online en 2023?",
+    "expected_status": "cannot_answer",
+    "status": "cannot_answer",
+    "correct": true,
+    "attempts": 1,
+    "notes": [],
+    "answer": "No es posible responder cuántas unidades vendió el canal Online en 2023 porque el dato no está disponible para ese canal y año.\n\n**Tablas consultadas:**\n- Unidades vendidas y facturación por región, 2023-2024 (informe_anual_ferreteria_andina.pdf, pág. 1)",
+    "run_id": "be83ad1d-c4da-4d45-9639-5a2dc6d9f183",
+    "error": null
+  }
+]

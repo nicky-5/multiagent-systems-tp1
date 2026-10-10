@@ -11,10 +11,7 @@ right table for a user's question (semantic search) and to write pandas code ove
 Rules:
 - Use only the table and its surrounding text. Don't invent periods, units or scope \
 that they don't support.
-- columns: one entry per column, in the given order, with the name copied exactly.
 - unit: take units from the caption, headers and notes (e.g. "en miles de ARS").
-- description: 2 to 4 sentences covering what is measured, units, period and scope \
-(e.g. which entities the rows cover).
 - Write name and descriptions in the language of the document's prose (its title, \
 headings, captions and paragraphs). Ignore the language of names inside the cells: \
 an English report about places with Spanish names gets English metadata."""

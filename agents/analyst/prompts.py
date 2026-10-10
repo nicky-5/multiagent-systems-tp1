@@ -21,8 +21,8 @@ part with operation "ratio", not a sales lookup, a population lookup and a ratio
 - For each part, list the metrics, entities, periods and the operation. Use only what the \
 question says: don't carry an entity or period from one part into another, and don't add \
 any the question doesn't mention.
-- searches: one per distinct dataset needed, each in Spanish and in English. Describe the \
-dataset, not the question: "ventas netas por provincia 2024", not "cuánto vendió Córdoba"."""
+- searches: describe the dataset, not the question: "ventas netas por provincia 2024", \
+not "cuánto vendió Córdoba"."""
 
 
 SELECT_SYSTEM = """\
@@ -44,8 +44,7 @@ defines it that way.
 nominal vs real values not stated).
 
 Check periods and entities against the column names and row labels listed for each table, \
-not only against its description. When a part isn't answerable, say what's missing and \
-what the closest related table does contain."""
+not only against its description."""
 
 
 def understand_user_prompt(question: str) -> str:
@@ -86,17 +85,13 @@ MAX_ERROR_CHARS = 2000
 PREVIEW_ROWS_FOR_CODE = 5
 
 
-def generate_system(packages: dict[str, str]) -> str:
-    """The code generator's instructions. packages is services.sandbox.available_packages():
-    exactly what the sandbox can import, with versions."""
-    available = ", ".join(f"{name} {version}" for name, version in packages.items())
-    return f"""\
+GENERATE_SYSTEM = """\
 You write a Python program that computes the answer to parts of a question from tables \
 extracted from PDF reports.
 
 Environment:
-- Python 3 with the standard library and only these packages: {available}. Nothing else \
-is installed.
+- Python 3 with the standard library and only the packages listed at the end. Nothing \
+else is installed.
 - Each table is a Parquet file in the current directory, named in the table list. Load it \
 with pandas.read_parquet("<file>"). There's no network and no other file.
 - pandas 3: text columns have the "str" dtype; numeric columns use the nullable "Int64" and \
@@ -115,15 +110,26 @@ millions, % <-> fraction, summing all 12 months into a year); mention them in ap
 figure (e.g. 0.164 thousands of ARS per resident), express it in a unit that reads \
 naturally (164 ARS per resident) and say so in approach. Keep percentages as percentages \
 (8.65 with unit "%"), not fractions.
+- When a part asks which entity has the highest or lowest value, report the entity with \
+its value as an object ({"Formosa": 165.43}, unit "ARS per resident"), not the name alone. \
+A text value has unit "".
 - If a value a part needs isn't in the data (a row, column or period not found, or NA), \
 don't guess: put the reason in that part's "missing" and leave "value" null.
 - End by printing exactly one line of JSON, and nothing after it:
-  print(json.dumps({{"parts": [...]}}, ensure_ascii=False))
-  with one entry per part, in the given order: {{"value": ..., "unit": "...", "missing": null}}.
-  value may be a number, string, list or object (e.g. {{"Salta": 1.5, "Jujuy": 2.1}}). \
+  print(json.dumps({"parts": [...]}, ensure_ascii=False))
+  with one entry per part, in the given order: {"value": ..., "unit": "...", "missing": null}.
+  value may be a number, string, list or object (e.g. {"Salta": 1.5, "Jujuy": 2.1}). \
 Convert numpy and pandas values to plain Python first (int(...), float(...), .tolist()), \
 and round to a sensible precision.
 - You may print intermediate values on earlier lines; they're shown to the user."""
+
+
+def generate_system(packages: dict[str, str]) -> str:
+    """The code generator's instructions. packages is services.sandbox.available_packages():
+    exactly what the sandbox can import, with versions. They go last so the fixed
+    instructions before them stay an identical, cacheable prefix if the versions change."""
+    available = "\n".join(f"- {name} {version}" for name, version in packages.items())
+    return f"{GENERATE_SYSTEM}\n\nAvailable packages:\n{available}"
 
 
 def generate_user_prompt(
@@ -173,9 +179,9 @@ results that were already computed. You don't compute anything yourself.
 
 - Answer in the language given. Be brief: the result first, then one or two sentences on \
 how it was computed (from "approach"), including any unit conversion.
-- Use only numbers from the computed results, copied as written (they're already \
-formatted for the answer's language), with their units. You may round them or express a \
-fraction as a percentage. Don't add numbers, estimates or outside knowledge.
+- Use only numbers from the computed results, copied exactly as written (they're already \
+rounded and formatted for the answer's language), with their units. Don't round or \
+convert them, and don't add numbers, estimates or outside knowledge.
 - For each part that couldn't be answered, say so and what's missing, using the reason \
 given (it may say what a related table does contain).
 - If nothing could be answered, give no numeric result at all.
