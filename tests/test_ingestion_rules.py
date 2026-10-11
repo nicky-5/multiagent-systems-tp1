@@ -86,7 +86,12 @@ def test_description_length(description: str, ok: bool):
 
 def test_name_rules():
     assert validate_metadata(meta(name="  "), DF) == ["name is empty."]
-    assert "maximum is 80" in validate_metadata(meta(name="x" * 81), DF)[0]
+    assert "maximum is 120" in validate_metadata(meta(name="x" * 121), DF)[0]
+    # 18 words of 7 characters plus spaces = 143: cut 33 characters, at 8 per word
+    long_name = " ".join(["Palabra"] * 18)
+    assert "Remove at least 33 characters (about 5 words)" in validate_metadata(
+        meta(name=long_name), DF
+    )[0]
 
 
 @pytest.mark.parametrize(

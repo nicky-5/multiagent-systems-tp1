@@ -1,6 +1,7 @@
 """Deterministic parts of ingestion: metadata validation, table ids, and records."""
 
 import json
+import math
 import re
 
 import pandas as pd
@@ -9,7 +10,11 @@ from agents.ingestion.schemas import Source, TableMetadata, TableRecord
 from services.pdf_extract import ExtractedTable
 from services.vector_store import MetadataValue
 
-MAX_NAME_LENGTH = 80
+# The prompt limits names in words, which a model can follow (it sees text as word
+# pieces, not letters); validation checks characters.
+# 12 words are about 80 characters, well within the hard limit.
+MAX_NAME_WORDS = 12
+MAX_NAME_LENGTH = 120
 PREVIEW_ROWS = 5
 
 
@@ -71,11 +76,16 @@ def validate_metadata(meta: TableMetadata, df: pd.DataFrame) -> list[str]:
     if not meta.name.strip():
         errors.append("name is empty.")
     elif len(meta.name) > MAX_NAME_LENGTH:
-        # Models count characters poorly, so say how much to cut and what can go
+        # Models count characters poorly, so say how much to cut, roughly in words too
+        # (at this name's own average word length, counting the space after each word),
+        # and what can go. The 10 extra characters keep the next try from landing just
+        # over the limit again.
+        to_cut = len(meta.name) - MAX_NAME_LENGTH + 10
+        chars_per_word = (len(meta.name) + 1) / len(meta.name.split())
         errors.append(
             f"name has {len(meta.name)} characters; the maximum is {MAX_NAME_LENGTH}. Remove at "
-            f"least {len(meta.name) - MAX_NAME_LENGTH + 10} characters, e.g. the scope or period, "
-            "which the description already covers."
+            f"least {to_cut} characters (about {math.ceil(to_cut / chars_per_word)} words), "
+            "e.g. the scope or period, which the description already covers."
         )
 
     sentences = count_sentences(meta.description)

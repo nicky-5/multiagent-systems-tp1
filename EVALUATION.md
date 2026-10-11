@@ -37,8 +37,10 @@ Each run is a LangSmith trace with the question's id in its metadata (`eval_id`)
 ## Results
 
 Models: `gpt-4.1-mini` for every step (also set as `LLM_CODE_MODEL`), at temperature 0.
-`ANALYST_MAX_CODE_ATTEMPTS=2`, so each question allows one self-correction. Sample PDFs
-ingested once beforehand.
+`ANALYST_MAX_CODE_ATTEMPTS=2`, so each question allows one self-correction. Last run on
+2026-10-11, after re-ingesting the sample PDFs with the word-limited name prompt (see
+[Changes made](#changes-made)); their five table names came out the same as before. Only the
+two sample PDFs were indexed.
 
 | ID | Question (abridged) | Expected | Got | Correct | Programs | Answer (abridged) |
 |----|---|---|---|:-:|:-:|---|
@@ -190,11 +192,15 @@ Elsewhere:
   its previous version. `scripts/remove_document.py` removes all of one PDF's tables.
 - **Citations:** the answer cites only the tables whose file the generated program reads.
 - **Prompts:** the metadata prompt keeps the caption's terms for what is measured, but asks
-  for a name of at most 80 characters without scope or period (first-attempt failures went
-  from 10 of 16 tables to 2); `select` lists only the tables a
-  part's calculation uses; the code prompt says a named entity's value comes from its own
-  row, never from a total, and that only what each part asks for is reported. The retry
-  message for an over-long table name says how many characters to cut.
+  for a name without scope or period, first of at most 80 characters (first-attempt failures
+  went from 10 of 16 tables to 2). `select` lists only the tables a part's calculation uses;
+  the code prompt says a named entity's value comes from its own row, never from a total,
+  and that only what each part asks for is reported.
+- **Name length, in words:** models see text as word pieces, not letters, and count
+  characters poorly. The prompt now asks for at most 12 words (about 80 characters), and
+  validation keeps a hard limit of 120 characters, checked in code. The retry message for
+  an over-long name says how many characters to cut, and about how many words that is at
+  the name's own average word length.
 
 
 ### Results
@@ -206,6 +212,12 @@ market report all 12 were right in two runs: lookups by quarter and year, one ag
 the highest value, a confidence interval, a count in thousands, a change between quarters,
 a two-part question, and two unanswerable questions (a quarter without regional data, a
 year before the series starts).
+
+With the 12-word prompt, both reports were ingested again (2026-10-11): **all 31 tables
+passed validation on the first attempt** (16 of 16 in the labour market report, where the
+80-character prompt had 2 failures; 15 of 15 in the poverty report). Names had a median of
+6–7 words and 42–49 characters, at most 11 words and 64 characters, so none came near the
+hard limit.
 
 ## Limitations of this evaluation
 

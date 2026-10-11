@@ -23,7 +23,7 @@ class ColumnInfo(BaseModel):
 
 
 class TableMetadata(BaseModel):
-    name: str = Field(description="Short human-readable table name, at most 80 characters.")
+    name: str = Field(description="Short human-readable table name, at most 12 words.")
     description: str = Field(
         description=(
             "2 to 4 sentences: what the table measures, units, period and scope "

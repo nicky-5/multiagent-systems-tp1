@@ -1,17 +1,18 @@
 """Prompts for the enrich node."""
 
+from agents.ingestion.rules import MAX_NAME_WORDS
 from services.pdf_extract import ExtractedTable
 
 PREVIEW_ROWS = 10
 
-ENRICH_SYSTEM = """\
+ENRICH_SYSTEM = f"""\
 You document tables extracted from PDF reports. Your metadata is used to find the \
 right table for a user's question (semantic search) and to write pandas code over it.
 
 Rules:
 - Use only the table and its surrounding text. Don't invent periods, units or scope \
 that they don't support.
-- name: at most 80 characters. Use the caption's own terms for what is measured, but leave \
+- name: at most {MAX_NAME_WORDS} words. Use the caption's own terms for what is measured, but leave \
 out the scope and period (e.g. "Total 31 aglomerados urbanos. Segundo trimestre de 2026"): \
 the description covers them.
 - description: keep the caption's own terms (e.g. both "canasta básica total" and "línea de \
