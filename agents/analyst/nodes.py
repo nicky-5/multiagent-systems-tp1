@@ -1,11 +1,13 @@
 """Nodes of the analyst graph. Each takes the state and returns a partial update."""
 
-from typing import Any
+from typing import Any, cast
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langgraph.types import interrupt
 
 from agents.analyst import prompts, rules
 from agents.analyst.schemas import (
+    Candidate,
     CodeAttempt,
     GeneratedCode,
     PartAssessment,
@@ -62,9 +64,52 @@ def retrieve(state: AnalystState) -> dict[str, Any]:
 def select(state: AnalystState) -> dict[str, Any]:
     """Decide which tables each part needs and whether it's answerable, then derive
     the status from those decisions."""
+    return _assess(state, state["candidates"])
+
+
+def review(state: AnalystState) -> dict[str, Any]:
+    """Human in the loop: the user confirms the selected tables or chooses others.
+
+    interrupt() pauses the graph here and hands its argument to the caller (the UI),
+    which resumes the graph with Command(resume=<table ids>); interrupt() then returns
+    those ids. On resume the node runs again from its start, so nothing before
+    interrupt() should be expensive.
+
+    If the user changed the tables, the selection is redone over exactly those tables:
+    the LLM still decides which part each serves and whether each part is answerable,
+    so a part whose table was removed becomes unanswerable instead of being guessed.
+    """
+    store = table_store()
+    if not state["review"] or not store.list_records():
+        return {}  # no review asked for, or no table to choose from
+    chosen = cast(list[str], interrupt({"selected_ids": state["selected_ids"]}))
+    ids = [i for i in dict.fromkeys(chosen) if store.exists(i)]  # known tables, each once
+    if set(ids) == set(state["selected_ids"]):
+        return {"user_table_ids": ids, "review_result": "confirmed"}
+
+    # Tables the user added that retrieval didn't find become candidates too, so the
+    # code generation and the answer can describe them
+    by_id = {c.table_id: c for c in state["candidates"]}
+    records = {r.table_id: r for r in store.list_records()}
+    added = [rules.candidate_from_record(records[i]) for i in ids if i not in by_id]
+    by_id |= {c.table_id: c for c in added}
+    return {
+        **_assess(state, [by_id[i] for i in ids], missing="No table was chosen for this question."),
+        "candidates": [*state["candidates"], *added],
+        "user_table_ids": ids,
+        "review_result": "changed",
+    }
+
+
+def _assess(
+    state: AnalystState,
+    candidates: list[Candidate],
+    missing: str = "No indexed table is related to this question.",
+) -> dict[str, Any]:
+    """Have the LLM judge each part of the question against these tables; with no
+    tables, every part is unanswerable for the reason given as missing."""
     plan = state["plan"]
     assert plan is not None
-    candidates = state["candidates"]
 
     if candidates:
         messages: list[BaseMessage] = [
@@ -75,12 +120,9 @@ def select(state: AnalystState) -> dict[str, Any]:
         parts = rules.check_assessments(
             selection.parts, [p.question for p in plan.parts], {c.table_id for c in candidates}
         )
-    else:  # nothing indexed matched: no need to ask the LLM
+    else:  # no table to judge: no need to ask the LLM
         parts = [
-            PartAssessment(
-                question=p.question, table_ids=[], answerable=False,
-                missing="No indexed table is related to this question.",
-            )
+            PartAssessment(question=p.question, table_ids=[], answerable=False, missing=missing)
             for p in plan.parts
         ]
 

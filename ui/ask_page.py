@@ -1,11 +1,18 @@
 """Ask questions about the indexed tables, with a chat history for the session."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
 import streamlit as st
 
-from agents.analyst.graph import ask
+from agents.analyst.graph import (
+    ProgressCallback,
+    TableReview,
+    ask,
+    ask_with_review,
+    resume_review,
+)
 from agents.analyst.state import AnalystState
 from services.table_store import table_store
 from ui.widgets import show_table
@@ -32,29 +39,100 @@ def render() -> None:
         "Questions are answered only from the indexed tables, by code run in a sandbox."
     )
 
+    review = st.toggle(
+        "Review the tables before the code is written",
+        key="review_tables",
+        help="The analyst pauses after choosing its tables, so you can confirm them or "
+        "pick others.",
+    )
+
     history: list[Exchange] = st.session_state.setdefault("chat", [])
     for exchange in history:
         render_exchange(exchange)
 
-    question = st.chat_input("Ask about the indexed tables (in English or Spanish)")
+    # A question paused for review, as (question, review); it survives reruns here
+    pending: tuple[str, TableReview] | None = st.session_state.get("pending_review")
+    if pending:
+        render_review(*pending, history)
+
+    question = st.chat_input(
+        "Ask about the indexed tables (in English or Spanish)",
+        disabled=pending is not None,
+    )
     if question:
         with st.chat_message("user"):
             st.markdown(question)
         with st.chat_message("assistant"):
-            exchange = run(question)
-            render_result(exchange)
-        history.append(exchange)
+            if review:
+                result = run(question, lambda report: ask_with_review(question, report))
+            else:
+                result = run(question, lambda report: ask(question, report))
+            if isinstance(result, TableReview):
+                st.session_state["pending_review"] = (question, result)
+                st.rerun()  # draw the review form through the pending path above
+            render_result(result)
+        history.append(result)
 
 
-def run(question: str) -> Exchange:
+def render_review(question: str, review: TableReview, history: list[Exchange]) -> None:
+    """The paused question: what the analyst chose, and a form to confirm or change it."""
+    state = review.state
+    by_id = {c.table_id: c for c in state["candidates"]}
+    with st.chat_message("user"):
+        st.markdown(question)
+    with st.chat_message("assistant"):
+        st.markdown("**Check the tables before the code is written**")
+        for part in state["assessments"]:
+            names = ", ".join(by_id[i].name for i in part.table_ids) or "no table"
+            verdict = "answerable" if part.answerable else f"not answerable: {part.missing}"
+            st.markdown(f"- *{part.question}*: {names} ({verdict})")
+
+        # Every stored table can be chosen: the candidates first, then the others
+        records = {r.table_id: r for r in table_store().list_records()}
+        options = [i for i in by_id if i in records] + [i for i in records if i not in by_id]
+
+        def label(table_id: str) -> str:
+            r = records[table_id]
+            return f"{r.name} · {r.source.filename}, p. {', '.join(map(str, r.source.pages))}"
+
+        # A form sends its widgets' values only when it's submitted
+        with st.form(f"review-{review.thread_id}"):
+            chosen = st.multiselect(
+                "Tables the code may use",
+                options,
+                default=[i for i in state["selected_ids"] if i in records],
+                format_func=label,
+            )
+            st.caption(
+                "If you change them, the analyst checks the question again against "
+                "your tables, and may find parts it can't answer with them."
+            )
+            confirmed = st.form_submit_button("Continue", type="primary")
+        cancelled = st.button("Cancel question")
+
+    if confirmed:
+        with st.chat_message("assistant"):
+            result = run(question, lambda report: resume_review(review, chosen, report))
+        assert not isinstance(result, TableReview)  # a run pauses only once
+        history.append(result)
+    if confirmed or cancelled:
+        st.session_state["pending_review"] = None
+        st.rerun()
+
+
+def run(
+    question: str, work: Callable[[ProgressCallback], AnalystState | TableReview]
+) -> Exchange | TableReview:
+    """Run the analyst (work) with progress shown, as an Exchange or a paused review."""
     with st.status("Working on it...", expanded=True) as status:
         try:
-            state = ask(
-                question, lambda node, message: st.write(f"**{node}**: {message}")
-            )
+            state = work(lambda node, message: st.write(f"**{node}**: {message}"))
         except Exception as e:  # noqa: BLE001  (shown to the user instead of crashing the app)
             status.update(label="Failed", state="error", expanded=True)
             return Exchange(question, error=f"{type(e).__name__}: {e}")
+        if isinstance(state, TableReview):
+            status.update(label="Waiting for you to check the tables", state="complete", expanded=False)
+            return state
         retries = len(state["attempts"]) - 1
         label = "Done" + (
             f" ({retries} code correction{'s' if retries > 1 else ''})"
@@ -80,6 +158,10 @@ def render_result(exchange: Exchange) -> None:
 
     label, color = BADGES[state["status"] or "cannot_answer"]
     st.badge(label, color=color)
+    if state["review_result"] == "confirmed":
+        st.caption("Tables confirmed by you.")
+    elif state["review_result"] == "changed":
+        st.caption("Tables chosen by you; the analyst checked the question against them.")
     st.markdown(state["answer"])
 
     missing = [p for p in state["assessments"] if not p.answerable]

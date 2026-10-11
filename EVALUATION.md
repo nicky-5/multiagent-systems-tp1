@@ -51,7 +51,7 @@ experiment ([evaluation/langsmith_eval.py](evaluation/langsmith_eval.py)):
   prompt or model change. The experiment's metadata records the models and analyst
   settings.
 
-Experiment `analyst-2d739ca2` (2026-10-11, same models and settings as below) scored
+Experiment `analyst-f9a5a394` (2026-10-11, same models and settings as below) scored
 **12/12** on `correct`, matching the local run.
 
 ## Results
@@ -258,7 +258,9 @@ Each node of each graph appears as a span. Representative traces:
 | Trace | What it shows | Link |
 |---|---|---|
 | Ingestion of `provincial_statistics_yearbook.pdf` | `extract`, two parallel `process_table` branches (enrich → validate → build_record), then one `index` | [link](https://smith.langchain.com/public/22a765d7-fb73-46d6-9928-8ac8f4beae5e/r/01a12904-9fb4-7840-8653-d0c0bb26ccd8) |
-| Q05: multi-table question | retrieval with bilingual searches, selection of two tables from two PDFs, generated code joining them, sandbox run, answer | [link](https://smith.langchain.com/public/71d3ef7f-83d4-4bba-892f-7464f7dc94b1/r/45aff754-1809-4252-933a-ec8134d86af8) |
-| Q07: `partial` | one part answered, one judged unanswerable in `select` (2025 not in the data); only the answerable part goes to code | [link](https://smith.langchain.com/public/6876701e-2ae1-4b34-a57b-9a32aa02540a/r/872c81e7-c224-4df2-b1ce-be6290e092b4) |
-| Q12: status lowered at run time | `select` says answerable, the program reports the value as `missing`, status becomes `cannot_answer` | [link](https://smith.langchain.com/public/005bb3f6-6778-4bb7-81be-545087260f5e/r/92c2c203-5f2c-455c-9b5e-196fc0fd913f) |
+| Q05: multi-table question | retrieval with bilingual searches, selection of two tables from two PDFs, generated code joining them, sandbox run, answer | [link](https://smith.langchain.com/public/70be080b-0710-44bd-b0de-928524c0576f/r/1b263b50-08a9-4ee5-a604-82f2ae3e09c6) |
+| Q07: `partial` | one part answered, one judged unanswerable in `select` (2025 not in the data); only the answerable part goes to code | [link](https://smith.langchain.com/public/f2678c15-3d77-45fb-8e2b-36d65acb1188/r/6fa52509-23d9-4288-97ba-507fdf131efe) |
+| Q12: status lowered at run time | `select` says answerable, the program reports the value as `missing`, status becomes `cannot_answer` | [link](https://smith.langchain.com/public/ad155f0b-2074-44e8-b6a5-21cb93c65bd7/r/52eeacdc-524b-498d-a1e4-cc39fe28937e) |
+| Human in the loop, paused: Q05 with review on | `select` picks the population and sales tables, then `review` stops the run (`interrupt`) to wait for the user | [link](https://smith.langchain.com/public/3bcae0c2-59e6-468f-89b6-aa68d161bd02/r/01a12b42-33d0-73f0-a4c6-a6bf3426224b) |
+| Human in the loop, resumed: the user removes the population table | `review` resumes with the user's tables and redoes the selection over them; without the 2023 population the status becomes `cannot_answer`, and no code is written | [link](https://smith.langchain.com/public/1a444932-12c4-4cfb-b87d-4e9f67ea3ed1/r/01a12b42-4ad0-7322-8595-f69e8e4faaea) |
 

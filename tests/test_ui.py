@@ -11,6 +11,7 @@ import pandas as pd
 import pytest
 from streamlit.testing.v1 import AppTest
 
+from agents.analyst.graph import TableReview
 from agents.analyst.schemas import Candidate, CodeAttempt, PartAssessment
 from agents.analyst.state import AnalystState, initial_state
 from agents.ingestion.schemas import ColumnInfo, Source, TableRecord
@@ -160,3 +161,38 @@ def test_ingest_page_shows_a_status_card_per_table(monkeypatch: pytest.MonkeyPat
     assert cards.count('class="ing-card"') == 2
     assert "Indexed" in cards and "Skipped" in cards
     assert "&lt;Población&gt;" in cards  # PDF and LLM text is escaped
+
+
+def test_ask_page_pauses_for_review_and_resumes_with_the_chosen_tables(monkeypatch: pytest.MonkeyPatch):
+    other = RECORD.model_copy(update={"table_id": "0123456789abcdef-p3-t0", "name": "Ventas por provincia"})
+    table_store().save(RECORD, pd.DataFrame({"Provincia": ["Salta"]}))
+    table_store().save(other, pd.DataFrame({"Provincia": ["Salta"]}))
+    resumed_with: list[list[str]] = []
+
+    def fake_ask_with_review(question: str, on_progress: object = None) -> TableReview:
+        return TableReview(thread_id="t1", state=answered_state(question))
+
+    def fake_resume(review: TableReview, table_ids: list[str], on_progress: object = None) -> AnalystState:
+        resumed_with.append(table_ids)
+        state = answered_state(review.state["question"])
+        state["user_table_ids"], state["review_result"] = table_ids, "changed"
+        return state
+
+    monkeypatch.setattr(ask_page, "ask_with_review", fake_ask_with_review)
+    monkeypatch.setattr(ask_page, "resume_review", fake_resume)
+    app = AppTest.from_function(ask_script).run()
+    app.toggle(key="review_tables").set_value(True).run()
+    app.chat_input[0].set_value("¿Población de Salta?").run()
+
+    assert not app.exception
+    assert app.chat_input[0].disabled  # no new question while one waits for review
+    tables = app.multiselect[0]
+    assert tables.value == [TABLE_ID]  # what the analyst selected
+    tables.set_value([other.table_id])
+    next(b for b in app.button if b.label == "Continue").click().run()
+
+    assert not app.exception
+    assert resumed_with == [[other.table_id]]
+    assert not app.multiselect  # the form is gone, the answer is in the history
+    assert any("Tables chosen by you" in c.value for c in app.caption)
+    assert "1.441.351" in " ".join(m.value for m in app.markdown)

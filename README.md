@@ -84,7 +84,10 @@ uv run streamlit run app.py
    pages, and the data.
 3. **Ask**: ask in English or Spanish. Each answer shows its status, what data is missing
    (if any), how the question was understood, the selected tables, the generated code with
-   its output and corrections, and the sandbox layers used.
+   its output and corrections, and the sandbox layers used. With **Review the tables before
+   the code is written** on, the analyst pauses after choosing its tables: confirm them, or
+   pick others from all the indexed tables, and it continues (see
+   [4.5](#45-analyst-answerability-decided-by-code)).
 
 Command-line versions of both agents (same code as the UI):
 
@@ -191,8 +194,9 @@ flowchart TD
     S([start]) --> understand["understand (LLM)"]
     understand --> retrieve
     retrieve --> select["select (LLM)"]
-    select -. "answered / partial" .-> generate_code["generate_code (code LLM)"]
-    select -. "cannot_answer" .-> respond["respond (LLM)"]
+    select --> review["review (human in the loop;<br/>LLM if tables changed)"]
+    review -. "answered / partial" .-> generate_code["generate_code (code LLM)"]
+    review -. "cannot_answer" .-> respond["respond (LLM)"]
     generate_code --> execute["execute (sandbox)"]
     execute -. "valid result" .-> respond
     execute -. "error or invalid output,<br/>attempts left" .-> generate_code
@@ -209,6 +213,9 @@ flowchart TD
   there (the §6.4 rules are in the prompt). Code then discards invented table ids and
   computes the status: all parts answerable → `answered`, none → `cannot_answer`, else
   `partial`.
+- **review**: only when the user asked to review the tables; otherwise it passes straight
+  through. It pauses the graph (`interrupt`) until the user confirms the selected tables or
+  chooses others; with other tables, the selection is redone over exactly those.
 - **generate_code**: a program over the selected tables, given their real column names
   and dtypes (read from the Parquet files), units, first rows, all row labels, and the
   packages available in the sandbox (with versions). On a retry: the failed program and
@@ -317,6 +324,18 @@ those parts become unanswerable. A question no part of which is answerable never
 code generation. If every program fails, the status becomes `cannot_answer` with
 "the calculation failed after N attempts".
 
+**Human in the loop.** With review on, the `review` node calls LangGraph's `interrupt()`,
+which stops the run and hands the selection to the UI. The UI resumes the same run with
+`Command(resume=<table ids>)`, and `interrupt()` returns those ids. Pausing needs a
+checkpointer, which saves the state until the resume (`InMemorySaver`, keyed by a
+`thread_id` per question; LangSmith groups both halves of a question by that same id).
+Only reviewed runs use it (`ask_with_review`, `resume_review`): `ask()`, the CLI and the
+evaluations run without pausing. If the user changes the tables, the selection is redone
+over exactly those tables rather than taken as given: the LLM still decides which part each
+table serves and whether it's answerable, so the status stays decided by graph logic. A
+part whose table was removed becomes unanswerable instead of being guessed; tables the user
+adds that retrieval didn't find become candidates.
+
 Code generation uses its own model setting (`LLM_CODE_MODEL`), since it's the hardest step.
 Tested through the proxy with structured output: `gpt-4.1`, `gpt-5.4`, `gpt-5.4-mini`,
 `claude-sonnet-4-5`, and `claude-opus-4-8` (with `LLM_CODE_TEMPERATURE=none`).
@@ -400,6 +419,8 @@ The test questions with expected answers and statuses are in
 - Answerability relies on the LLM's judgment in `select`; code enforces what it can (valid
   table ids, the program's `missing` reports) but can't verify, e.g., that a column is
   nominal rather than real.
+- A question paused for review lives in the app's memory (`InMemorySaver`): restarting
+  Streamlit drops it, and paused questions that are never resumed stay there until then.
 - Each question is independent: the chat shows history, but follow-up questions don't see
   earlier ones.
 

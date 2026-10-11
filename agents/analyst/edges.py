@@ -5,8 +5,11 @@ from typing import Literal
 from agents.analyst.state import AnalystState
 
 
-def after_select(state: AnalystState) -> Literal["generate_code", "respond"]:
-    """Nothing to compute when no part is answerable: go straight to the answer."""
+def after_review(state: AnalystState) -> Literal["generate_code", "respond"]:
+    """Nothing to compute when no part is answerable: go straight to the answer.
+
+    Runs after review, so the status is the one for the tables the user confirmed or
+    chose (without a review, the one select decided)."""
     if state["status"] == "cannot_answer":
         return "respond"
     return "generate_code"

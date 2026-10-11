@@ -4,7 +4,7 @@ The generated programs are real and run in the real sandbox, against a small tab
 in a temporary table store.
 """
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
 from typing import Any, cast
 
@@ -15,7 +15,12 @@ from langchain_core.runnables import RunnableLambda
 from pydantic import BaseModel
 
 from agents.analyst import nodes
-from agents.analyst.graph import build_graph
+from agents.analyst.graph import (
+    TableReview,
+    ask_with_review,
+    build_graph,
+    resume_review,
+)
 from agents.analyst.schemas import (
     GeneratedCode,
     PartAssessment,
@@ -27,6 +32,7 @@ from agents.analyst.schemas import (
 from agents.analyst.state import AnalystState, initial_state
 from agents.ingestion.rules import pinecone_metadata
 from agents.ingestion.schemas import ColumnInfo, Source, TableRecord
+from services.config import get_settings
 from services.table_store import TableStore
 from services.vector_store import Match
 
@@ -135,6 +141,21 @@ def run(
 ) -> AnalystState:
     """stored: tables with data in the table store; indexed: tables in Pinecone
     (defaults to the stored ones); coder: the code-generation model (defaults to llm)."""
+    use_fakes(monkeypatch, tmp_path, llm, stored, indexed, coder)
+    state_in = initial_state("¿pregunta?", max_attempts)
+    output = build_graph().invoke(state_in)  # pyright: ignore[reportUnknownMemberType]
+    return cast(AnalystState, output)
+
+
+def use_fakes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    llm: FakeChatModel,
+    stored: list[TableRecord],
+    indexed: list[TableRecord] | None = None,
+    coder: FakeChatModel | None = None,
+) -> None:
+    """Replace the LLMs, embeddings, Pinecone and the table store (see run)."""
     tables = TableStore(tmp_path)
     for record in stored:
         tables.save(record, DATA)
@@ -150,9 +171,6 @@ def run(
     }
     for name, factory in fakes.items():
         monkeypatch.setattr(nodes, name, factory)
-    state_in = initial_state("¿pregunta?", max_attempts)
-    output = build_graph().invoke(state_in)  # pyright: ignore[reportUnknownMemberType]
-    return cast(AnalystState, output)
 
 
 # --- retrieval and selection -------------------------------------------------------
@@ -288,3 +306,82 @@ def test_code_is_generated_by_the_code_model(monkeypatch: pytest.MonkeyPatch, tm
     assert state["status"] == "answered"
     assert coder.asked == [GeneratedCode]
     assert general.asked == [QueryPlan, Selection, "respond"]
+
+
+# --- human in the loop: reviewing the selected tables -------------------------------
+
+
+@pytest.fixture
+def settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """ask_with_review reads the settings; give it placeholder credentials."""
+    for name in ("LITELLM_BASE_URL", "LITELLM_API_KEY", "PINECONE_API_KEY"):
+        monkeypatch.setenv(name, "x")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
+def paused(question: str = "¿pregunta?") -> TableReview:
+    review = ask_with_review(question)
+    assert isinstance(review, TableReview)
+    return review
+
+
+@pytest.mark.usefixtures("settings")
+def test_review_pauses_after_select_and_confirming_keeps_the_selection(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    llm = FakeChatModel({
+        QueryPlan: plan("población de Salta 2023"),
+        Selection: Selection(parts=[assess(True)]),
+        GeneratedCode: program(SALTA),
+    })
+    use_fakes(monkeypatch, tmp_path, llm, [make_record(POPULATION, "Población"), make_record(SALES, "Ventas")])
+
+    review = paused()
+    assert review.state["selected_ids"] == [POPULATION]
+    assert review.state["attempts"] == []  # no code before the user confirms
+
+    state = resume_review(review, [POPULATION])
+    assert state["status"] == "answered"
+    assert state["user_table_ids"] == [POPULATION]
+    assert state["review_result"] == "confirmed"
+    assert llm.asked.count(Selection) == 1  # confirming doesn't ask the LLM again
+
+
+@pytest.mark.usefixtures("settings")
+def test_changed_tables_are_judged_again_and_may_lower_the_status(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """The user swaps the selected table for one retrieval didn't find."""
+    llm = FakeChatModel({
+        QueryPlan: plan("población de Salta 2023"),
+        Selection: [
+            Selection(parts=[assess(True)]),
+            Selection(parts=[PartAssessment(question="x", table_ids=[], answerable=False, missing="Ventas no tiene población")]),
+        ],
+    })
+    stored = [make_record(POPULATION, "Población"), make_record(SALES, "Ventas")]
+    use_fakes(monkeypatch, tmp_path, llm, stored, indexed=[stored[0]])
+
+    state = resume_review(paused(), [SALES])
+
+    assert state["user_table_ids"] == [SALES]
+    assert state["review_result"] == "changed"
+    assert state["status"] == "cannot_answer"
+    assert state["attempts"] == []
+    assert [c.table_id for c in state["candidates"]] == [POPULATION, SALES]  # the added table
+    reselection = str(llm.prompts[llm.asked.index(Selection, 2)][-1].content)
+    assert SALES in reselection and POPULATION not in reselection  # only the user's tables
+
+
+@pytest.mark.usefixtures("settings")
+def test_choosing_no_table_cannot_answer_without_asking_the_llm(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    llm = FakeChatModel({QueryPlan: plan("población de Salta 2023"), Selection: Selection(parts=[assess(True)])})
+    use_fakes(monkeypatch, tmp_path, llm, [make_record(POPULATION, "Población")])
+
+    state = resume_review(paused(), [])
+
+    assert state["status"] == "cannot_answer"
+    assert state["assessments"][0].missing == "No table was chosen for this question."
+    assert llm.asked == [QueryPlan, Selection, "respond"]
