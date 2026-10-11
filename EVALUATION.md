@@ -34,6 +34,26 @@ LLM, Pinecone and sandbox) and checks, automatically:
 
 Each run is a LangSmith trace with the question's id in its metadata (`eval_id`).
 
+### Automated evaluation in LangSmith
+
+`uv run python -m evaluation.langsmith_eval` runs the same checks as a LangSmith
+experiment ([evaluation/langsmith_eval.py](evaluation/langsmith_eval.py)):
+
+- **Dataset** `pdf-tables-qa`: one example per question, with the question as input and the
+  `expected_*` fields as reference outputs. It is synced from `questions.json` on every run.
+  Example ids are derived from the question id, so a re-sync updates examples instead of
+  duplicating them.
+- **Target:** the analyst. Its trace, with every graph node, is nested under each example's
+  run.
+- **Evaluators:** `status`, `values`, `text` and `tables` (the four checks above, using the
+  same functions as the local script), plus `correct` (all four passed). LangSmith stores
+  them as feedback, so experiments can be compared side by side, for example after a
+  prompt or model change. The experiment's metadata records the models and analyst
+  settings.
+
+Experiment `analyst-2d739ca2` (2026-10-11, same models and settings as below) scored
+**12/12** on `correct`, matching the local run.
+
 ## Results
 
 Models: `gpt-4.1-mini` for every step (also set as `LLM_CODE_MODEL`), at temperature 0.

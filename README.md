@@ -98,6 +98,7 @@ Other commands:
 ```bash
 uv run pytest                                  # tests (no network needed)
 uv run python -m evaluation.evaluate           # run the test questions (needs the sample PDFs ingested)
+uv run python -m evaluation.langsmith_eval     # the same, as a LangSmith dataset + evaluators experiment
 uv run python scripts/sandbox_demo.py          # show what the sandbox allows and blocks
 uv run python scripts/make_sample_pdfs.py      # regenerate the sample PDFs
 uv run python scripts/explore_pdf.py <file>    # print what PyMuPDF sees in a PDF
@@ -124,7 +125,7 @@ uv run ruff check . && uvx pyright --pythonpath .venv/bin/python   # lint, stric
 │   ├── vector_store.py       # Pinecone index
 │   └── sandbox.py            # running generated code in isolation
 ├── sandbox/                  # the sandbox's own uv environment and its launcher script
-├── evaluation/               # test questions, evaluation runner, latest results
+├── evaluation/               # test questions, local and LangSmith evaluation runners, latest results
 ├── data/sample_pdfs/         # the two sample PDFs (fictional data)
 ├── scripts/                  # sample PDF generator, PDF explorer, sandbox demo
 └── tests/
@@ -357,11 +358,14 @@ Every ingestion and analyst run is one LangSmith trace (`run_name` `ingestion` /
 `analyst`, tags, metadata: file name or question, and `eval_id` for evaluation runs), with
 every node as a span, including the nodes inside each parallel `process_table` branch.
 
+The test questions are also a LangSmith dataset (`pdf-tables-qa`), scored automatically by
+evaluators in `evaluation/langsmith_eval.py`; see [EVALUATION.md](EVALUATION.md).
+
 ---
 
 ## 5. Tests
 
-`uv run pytest`: about 160 tests, none needing network or API keys (LangSmith tracing is
+`uv run pytest`: about 190 tests, none needing network or API keys (LangSmith tracing is
 switched off in `tests/conftest.py`). They cover number parsing, header detection,
 continuation merging, context, metadata validation, ids, Pinecone metadata size trimming,
 the table store, retrieval merging, status decisions, result validation, both graphs end to
