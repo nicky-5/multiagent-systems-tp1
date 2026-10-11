@@ -11,6 +11,8 @@ right table for a user's question (semantic search) and to write pandas code ove
 Rules:
 - Use only the table and its surrounding text. Don't invent periods, units or scope \
 that they don't support.
+- name and description: keep the caption's own terms (e.g. both "canasta básica total" and \
+"línea de pobreza" when the caption uses both), because questions will use them.
 - unit: take units from the caption, headers and notes (e.g. "en miles de ARS").
 - Write name and descriptions in the language of the document's prose (its title, \
 headings, captions and paragraphs). Ignore the language of names inside the cells: \
@@ -30,6 +32,7 @@ def enrich_user_prompt(table: ExtractedTable, filename: str) -> str:
         *(f"  {text}" for text in context.above or ["(none)"]),
         "Text after the table:",
         *(f"  {text}" for text in context.below or ["(none)"]),
+        f"Header labels over the whole table: {', '.join(context.header_notes) or '(none)'}",
         "",
         f"Columns ({len(df.columns)}):",
         columns,

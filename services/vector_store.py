@@ -57,6 +57,10 @@ class VectorStore:
         self.index.upsert(vectors=records, batch_size=UPSERT_BATCH_SIZE, show_progress=False)
         return len(records)
 
+    def delete(self, ids: Sequence[str]) -> None:
+        if ids:
+            self.index.delete(ids=list(ids))
+
     def query(self, vector: Sequence[float], top_k: int) -> list[Match]:
         """The top_k records most similar to vector, best first."""
         # query() is typed as also returning an async result whose type is unknown.

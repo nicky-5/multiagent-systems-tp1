@@ -31,7 +31,8 @@ def understand(state: AnalystState) -> dict[str, Any]:
 
 
 def retrieve(state: AnalystState) -> dict[str, Any]:
-    """Search Pinecone with every query in both languages and merge the results (no LLM)."""
+    """Search Pinecone with every query in both languages and merge the results, then
+    add tables with a row label the question names (no LLM)."""
     plan = state["plan"]
     assert plan is not None  # understand always runs first
     settings = get_settings()
@@ -47,6 +48,13 @@ def retrieve(state: AnalystState) -> dict[str, Any]:
     tables = table_store()
     candidates = [rules.candidate_from_match(m) for m in matches if tables.exists(m.id)]
     stale = [m.id for m in matches if not tables.exists(m.id)]
+
+    found = {c.table_id for c in candidates}
+    entities = [entity for part in plan.parts for entity in part.entities]
+    records = tables.list_records()
+    labelled = [i for i in rules.tables_labelling(entities, records) if i not in found]
+    by_id = {r.table_id: r for r in records}
+    candidates += [rules.candidate_from_record(by_id[i]) for i in labelled[: rules.MAX_LABEL_CANDIDATES]]
     warnings = [f"Indexed tables without stored data were ignored: {stale}"] if stale else []
     return {"candidates": candidates, "warnings": warnings}
 

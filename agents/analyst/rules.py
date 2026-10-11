@@ -3,12 +3,15 @@ table choices and the program's output, deciding the answer status, and citing s
 
 import json
 import math
+import unicodedata
 from collections.abc import Iterable, Sequence
 from typing import Any, cast
 
 from agents.analyst.schemas import Candidate, PartAssessment, Status
-from agents.ingestion.schemas import ColumnInfo
+from agents.ingestion.schemas import ColumnInfo, TableRecord
 from services.vector_store import Match
+
+MAX_LABEL_CANDIDATES = 3  # tables added because a row label names an entity of the question
 
 
 def candidate_from_match(match: Match) -> Candidate:
@@ -28,6 +31,46 @@ def candidate_from_match(match: Match) -> Candidate:
         n_rows=int(m["n_rows"]),
         preview=m.get("preview", ""),
     )
+
+
+def candidate_from_record(record: TableRecord) -> Candidate:
+    """A table found by its row labels rather than by Pinecone (so it has no score)."""
+    return Candidate(
+        table_id=record.table_id,
+        score=0.0,
+        name=record.name,
+        description=record.description,
+        filename=record.source.filename,
+        pages=record.source.pages,
+        columns=record.columns,
+        row_header_column=record.row_header_column,
+        row_headers=record.row_headers,
+        n_rows=record.n_rows,
+        preview=record.preview,
+    )
+
+
+def _normalize(text: str) -> str:
+    """Compare labels ignoring case, accents and spacing: "Gran  Córdoba" == "gran cordoba"."""
+    without_accents = "".join(
+        ch for ch in unicodedata.normalize("NFKD", text) if not unicodedata.combining(ch)
+    )
+    return " ".join(without_accents.casefold().split())
+
+
+def tables_labelling(entities: Iterable[str], records: Iterable[TableRecord]) -> list[str]:
+    """Ids of the tables with a row label equal to one of the entities.
+
+    A table's embedding blends its name, columns and dozens of row labels, so a
+    question about one row ("Gran Rosario") may not find it by similarity. An exact
+    label match finds it regardless.
+    """
+    wanted = {_normalize(entity) for entity in entities if entity.strip()}
+    return [
+        record.table_id
+        for record in records
+        if wanted & {_normalize(label) for label in record.row_headers}
+    ]
 
 
 def merge_matches(results: Iterable[Sequence[Match]], limit: int) -> list[Match]:

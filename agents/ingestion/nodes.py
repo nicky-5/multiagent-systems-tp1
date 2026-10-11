@@ -44,17 +44,26 @@ def index(state: IngestionState) -> dict[str, Any]:
     Runs once, after all the per-table branches have finished, so rejected tables
     never get here. The table store is written first: a Pinecone record must never
     point at data that isn't saved.
+
+    Tables a previous ingestion of this PDF stored, but that this extraction no longer
+    finds (e.g. after the extractor changed), are removed. A table that was found but
+    rejected this time keeps its previous version.
     """
     records = sorted(state["records"], key=lambda r: r.table_id)
-    if not records:
-        return {"indexed": []}
-
     # Find each record's DataFrame by recomputing the id of every extracted table
     frames = {
         rules.make_table_id(state["doc_hash"], t.pages[0], t.index_on_page): t.df
         for t in state["tables"]
     }
     store = table_store()
+    stale = [i for i in store.document_ids(rules.document_prefix(state["doc_hash"])) if i not in frames]
+    if stale:
+        vector_store().delete(stale)  # Pinecone first, so no record points at deleted data
+        for table_id in stale:
+            store.delete(table_id)
+    if not records:
+        return {"indexed": []}
+
     for record in records:
         store.save(record, frames[record.table_id])
 

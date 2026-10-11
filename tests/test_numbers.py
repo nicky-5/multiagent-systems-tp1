@@ -12,6 +12,7 @@ from services.numbers import infer_decimal_sep, parse_number
         ("18.801,8", 18801.8),  # Spanish decimal
         ("1,234.5", 1234.5),  # English decimal
         ("0,2 %", 0.2),  # percentages keep their value
+        ("% 5,6", 5.6),  # unit first, when a unit column is merged into the value
         ("1.43%", 1.43),
         ("+5.3%", 5.3),
         ("-12,5", -12.5),

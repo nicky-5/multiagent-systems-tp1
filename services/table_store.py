@@ -41,6 +41,16 @@ class TableStore:
     def load_record(self, table_id: str) -> TableRecord:
         return TableRecord.model_validate_json(self._path(table_id, ".json").read_text())
 
+    def document_ids(self, doc_prefix: str) -> list[str]:
+        """The ids of every stored table of one document (ids start with its hash prefix)."""
+        if not self.root.exists():
+            return []
+        return sorted(p.stem for p in self.root.glob(f"{doc_prefix}-*.parquet"))
+
+    def delete(self, table_id: str) -> None:
+        for suffix in (".json", ".parquet"):  # the record first: list_records only reads JSON
+            self._path(table_id, suffix).unlink(missing_ok=True)
+
     def list_records(self) -> list[TableRecord]:
         if not self.root.exists():
             return []

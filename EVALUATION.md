@@ -114,11 +114,74 @@ With the rule, Q06 returned `{"Formosa": 165.43}` in 5 of 5 runs, on the first p
   works because the names are spelled identically in both documents; with differing
   spellings the join would silently drop rows.
 
+## Test on a real report
+
+The sample PDFs have ruled tables. To check robustness, the system was also run on a real
+INDEC report (EPH,
+first half of 2026; 20 pages, 15 tables). The PDF was used temporarily and is not part
+of the submission.
+
+### What failed
+
+Almost all the problems were in table extraction, not in the agents:
+
+- **Rows were broken.** INDEC tables use shaded bands instead of cell borders. PyMuPDF's
+  default finder splits columns at drawn lines, so every unshaded row came out as one cell
+  holding all its values (`'Cuyo 2,32 2,31 2,32 …'`).
+- **Headers were lost.** Headers sit above the first shaded band, outside the detected
+  table, so most columns were named `column_1 … column_N`.
+- **Tables were split or merged wrongly.** One table on page 16 became five; Cuadros 4.1
+  and 4.2 (same layout, consecutive pages) were merged into one 86-row table by the
+  continuation rule; the cover page and the table of contents were indexed as tables.
+- **The context was wrong.** The PDF stores text in drawing order, so captions were
+  attached to the wrong tables, and a repeated page footer became one table's name.
+
+### Changes made
+
+In `services/pdf_extract.py`:
+
+- **Detection:** PyMuPDF's layout analysis (the `pymupdf-layout` package) with
+  `find_tables(union=True, refine=True)`, which finds tables drawn without lines and
+  re-splits merged rows and columns. Cells are read from PyMuPDF's refined grid, which keeps
+  a label spanning two columns whole ("2026", where the plain extraction gives "20" / "26").
+  The two sample PDFs extract exactly as before.
+- **Headers:** a label over the whole table ("2026", "Pesos", "%") is passed to the
+  metadata prompt as a table-wide note instead of becoming part of every column name.
+  Group labels apply to the columns nearest them.
+- **Rows:** label-only rows become a `Section` column.
+  Confidence-interval rows (`[41,4 ; 43,7]`) become min/max columns, so the estimates
+  stay numeric.
+- **Continuations:** a caption ("Cuadro 4.2", "Table 2") between two parts means a new table.
+- **Filtering:** tables of contents (dot leaders) and near-empty fragments are skipped
+  with a warning.
+- **Context:** text is sorted into reading order, each table's caption is always included,
+  and running headers and footers (text repeated on three or more pages) are dropped.
+
+Elsewhere:
+
+- `services/numbers.py` parses a unit written before the value (`% 5,6`).
+- **Retrieval** also adds tables whose row labels exactly match an entity in the question.
+  "Gran Rosario" is one of Cuadro 4.1's 42 row labels, and semantic search over the whole
+  table's embedding didn't find it.
+- **Re-ingesting** a PDF now removes the tables it no longer yields from Pinecone and the
+  table store (needed after an extractor change). A table found but rejected this time keeps
+  its previous version. `scripts/remove_document.py` removes all of one PDF's tables.
+- **Prompts:** the metadata prompt keeps the caption's own terms; `select` lists only the tables a
+  part's calculation uses; the code prompt says a named entity's value comes from its own
+  row, never from a total, and that only what each part asks for is reported. The retry
+  message for an over-long table name says how many characters to cut.
+
+
+The course questions were re-run after these changes, with the report still indexed:
+12/12 correct (the table above in Results).
+
 ## Limitations of this evaluation
 
-- The PDFs are synthetic and both they and the questions were written by the system's
-  author, so the set tests the designed behaviours, not robustness to real-world reports.
-- Twelve questions over five tables is small; results on a larger, independent set would be
+- The sample PDFs are synthetic and both they and the questions were written by the system's
+  author, so the set tests the designed behaviours. The real report above is one document,
+  and its questions were also written by the author, after the extraction had been fixed on
+  that same document.
+- Twelve questions over five tables (plus twelve over the real report) is small; results on a larger, independent set would be
   more convincing.
 - The checks verify statuses, numbers, names and selected tables, not the wording of the
   explanation. Q06's answer without its figure passed them; it was found by reading the

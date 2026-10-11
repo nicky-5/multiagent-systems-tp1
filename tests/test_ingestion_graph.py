@@ -70,6 +70,10 @@ class FakeVectorStore:
         self.records.update(zip(ids, metadatas, strict=True))  # same id overwrites, like Pinecone
         return len(ids)
 
+    def delete(self, ids: Sequence[str]) -> None:
+        for i in ids:
+            self.records.pop(i, None)
+
 
 class Services:
     """The fakes a test can inspect after running the graph."""
@@ -147,4 +151,29 @@ def test_reingesting_the_same_pdf_overwrites_its_records(monkeypatch: pytest.Mon
 
     assert first["indexed"] == second["indexed"]  # same content, same ids
     assert len(services.vectors.records) == 3  # overwritten, not duplicated
+    assert len(services.tables.list_records()) == 3
+
+
+def test_reingesting_removes_tables_no_longer_extracted(monkeypatch: pytest.MonkeyPatch, services: Services):
+    fake = FakeChatModel(lambda _prompt, _attempt: VALID)
+    first = run(monkeypatch, fake)
+    # A table an older extractor found at a position this one doesn't
+    prefix = first["indexed"][0].split("-")[0]
+    old_id = f"{prefix}-p9-t0"
+    old = services.tables.load_record(first["indexed"][0]).model_copy(update={"table_id": old_id})
+    services.tables.save(old, services.tables.load_df(first["indexed"][0]))
+    services.vectors.records[old_id] = {}
+
+    run(monkeypatch, fake)
+
+    assert old_id not in services.vectors.records
+    assert not services.tables.exists(old_id)
+    assert len(services.tables.list_records()) == 3
+
+
+def test_reingesting_keeps_a_rejected_tables_previous_version(monkeypatch: pytest.MonkeyPatch, services: Services):
+    first = run(monkeypatch, FakeChatModel(lambda _prompt, _attempt: VALID))
+    run(monkeypatch, FakeChatModel(lambda prompt, _attempt: INVALID if "'Concepto'" in prompt else VALID), max_attempts=1)
+
+    assert sorted(services.vectors.records) == sorted(first["indexed"])  # p1-t0 still indexed
     assert len(services.tables.list_records()) == 3

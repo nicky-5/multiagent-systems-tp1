@@ -41,3 +41,16 @@ def test_round_trip_keeps_nullable_dtypes(tmp_path: Path):
 def test_rejects_ids_that_are_not_table_ids(tmp_path: Path, bad_id: str):
     with pytest.raises(ValueError, match="Invalid table_id"):
         TableStore(tmp_path).load_df(bad_id)
+
+
+def test_document_ids_and_delete(tmp_path: Path):
+    store = TableStore(tmp_path)
+    df = pd.DataFrame({"Provincia": pd.Series(["Salta"], dtype="string")})
+    other = make_record().model_copy(update={"table_id": "fedcba9876543210-p2-t0"})
+    store.save(make_record(), df)
+    store.save(other, df)
+
+    assert store.document_ids("0123456789abcdef") == [TABLE_ID]
+    store.delete(TABLE_ID)
+    assert not store.exists(TABLE_ID)
+    assert [r.table_id for r in store.list_records()] == [other.table_id]

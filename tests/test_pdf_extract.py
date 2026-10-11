@@ -10,10 +10,15 @@ from services.pdf_extract import (
     Table,
     TextBlock,
     collect_context,
+    drop_running_text,
     extract_tables,
     flatten_header,
     merge_continuations,
+    merge_range_rows,
+    placements_to_rows,
     split_header,
+    split_sections,
+    tidy_header,
     to_dataframe,
 )
 
@@ -52,6 +57,65 @@ def test_split_header_none_when_first_row_has_data():
 def test_split_header_text_only_table_keeps_one_header_row():
     rows: list[Row] = [["Name", "Role"], ["Ana", "Owner"]]
     assert split_header(rows) == (rows[:1], rows[1:])
+
+
+def test_split_header_leaves_a_section_row_in_the_body():
+    rows: list[Row] = [
+        ["Indicador", "2024", "2025"],
+        ["Pobreza", "", ""],  # labels the rows below it
+        ["Hogares", "42,5", "24,1"],
+    ]
+    assert split_header(rows) == (rows[:1], rows[1:])
+
+
+def test_split_header_keeps_a_row_label_header_between_header_rows():
+    rows: list[Row] = [
+        ["", "Hogares", "", "Personas"],
+        ["Área geográfica", "", "", ""],  # the first column's name, above the sub-headers
+        ["", "Total", "Incidencia", "Total"],
+        ["Cuyo", "1.142", "23,8", "4.508"],
+    ]
+    assert split_header(rows) == (rows[:3], rows[3:])
+
+
+def test_tidy_header_single_group_label_becomes_a_note():
+    header: list[Row] = [["", "", "2026", "", ""], ["Región", "Enero", "Febrero", "Marzo", "Abril"]]
+    rows, notes = tidy_header(header)
+    assert notes == ["2026"]
+    assert flatten_header(rows) == ["Región", "Enero", "Febrero", "Marzo", "Abril"]
+
+
+def test_tidy_header_spreads_group_labels_to_nearest_columns():
+    header: list[Row] = [
+        ["", "", "Hogares", "", "", "Personas", ""],
+        ["Área", "Total", "Incidencia", "CV", "Total", "Incidencia", "CV"],
+    ]
+    rows, notes = tidy_header(header)
+    assert notes == []
+    assert flatten_header(rows) == [
+        "Área", "Hogares Total", "Hogares Incidencia", "Hogares CV",
+        "Personas Total", "Personas Incidencia", "Personas CV",
+    ]
+
+
+def test_tidy_header_leaves_merged_cells_and_the_last_row_alone():
+    header: list[Row] = [["", "2023", None, "2024", None], ["Región", "Unidades", "Monto", "", ""]]
+    rows, notes = tidy_header(header)
+    assert (rows, notes) == (header, [])
+
+
+def test_placements_to_rows_fills_spanned_positions():
+    # Like HTML, the grid leaves out positions a span covers: "Región" spans 2 rows,
+    # "2023" and "2024" 2 columns each
+    placements = [
+        [("Región", 1, 2), ("2023", 2, 1), ("2024", 2, 1)],
+        [("Unidades", 1, 1), ("Monto", 1, 1), ("Unidades", 1, 1), ("Monto", 1, 1)],
+    ]
+    assert placements_to_rows(placements, 5) == [
+        ["Región", "2023", None, "2024", None],
+        ["", "Unidades", "Monto", "Unidades", "Monto"],
+    ]
+    assert placements_to_rows(placements, 6) is None  # doesn't fit: use extract() instead
 
 
 def test_flatten_header_merged_cells():
@@ -105,6 +169,13 @@ def test_not_a_continuation(second: RawTable):
     assert len(merge_continuations([raw(1, [HEADER, ["Salta", "1,5"]]), second])) == 2
 
 
+def test_not_a_continuation_after_a_caption():
+    first = raw(1, [HEADER, ["Salta", "1,5"]])
+    second = raw(2, [HEADER, ["Jujuy", "2,5"]], bbox=(0, 100, 500, 300))
+    caption = (2, 80.0)  # "Cuadro 4.2", just above the second table
+    assert len(merge_continuations([first, second], captions=[caption])) == 2
+
+
 def test_not_a_continuation_when_previous_table_is_not_last_on_its_page():
     first = raw(1, [HEADER, ["Salta", "1,5"]], last=False)
     assert len(merge_continuations([first, raw(2, [["Jujuy", "2,5"]])])) == 2
@@ -132,6 +203,55 @@ def test_to_dataframe_types_columns():
     assert df["Unidades"].isna().tolist() == [False, True]  # empty cell -> <NA>
     assert df["Monto"].tolist() == [1234.5, -10.0]
     assert df["Share (%)"].tolist() == [60, 40]
+
+
+def test_split_sections_labels_rows_with_their_section():
+    body = [
+        ["Total", "10", "20"],
+        ["Pobreza", "", ""],
+        ["Hogares", "42,5", "24,1"],
+        ["Indigencia", "", ""],
+        ["Hogares", "13,6", "5,6"],
+    ]
+    sections, rows = split_sections(body)
+    assert sections == ["", "Pobreza", "Indigencia"]
+    assert rows == [body[0], body[2], body[4]]
+
+
+def test_merge_range_rows_moves_intervals_into_columns():
+    columns = ["Indicador", "2024", "2025"]
+    body = [
+        ["Hogares", "42,5", "24,1"],
+        ["IC (90%)", "[41,4 ; 43,7]", "[23,0 ; 25,3]"],
+        ["Personas", "52,9", "31,6"],
+        ["IC (90%)", "[51,4 ; 54,5]", "[30,1 ; 33,1]"],
+    ]
+    new_columns, rows = merge_range_rows(columns, body)
+    assert new_columns == [
+        "Indicador", "2024", "2024: IC (90%) (min)", "2024: IC (90%) (max)",
+        "2025", "2025: IC (90%) (min)", "2025: IC (90%) (max)",
+    ]
+    assert rows == [
+        ["Hogares", "42,5", "41,4", "43,7", "24,1", "23,0", "25,3"],
+        ["Personas", "52,9", "51,4", "54,5", "31,6", "30,1", "33,1"],
+    ]
+
+
+def test_merge_range_rows_leaves_tables_without_ranges_alone():
+    body = [["Hogares", "42,5"], ["Personas", "[a ; b] text"]]
+    assert merge_range_rows(["Indicador", "2024"], body) == (["Indicador", "2024"], body)
+
+
+def test_to_dataframe_section_column():
+    table = Table(
+        parts=[raw(1, [["Indicador", "2024", "2025"]])],
+        header_rows=[["Indicador", "2024", "2025"]],
+        body=[["Pobreza", "", ""], ["Hogares", "42,5", "24,1"], ["Indigencia", "", ""], ["Hogares", "13,6", "5,6"]],
+    )
+    df = to_dataframe(table)
+    assert list(df.columns) == ["Section", "Indicador", "2024", "2025"]
+    assert df["Section"].tolist() == ["Pobreza", "Indigencia"]
+    assert df["2024"].tolist() == [42.5, 13.6]
 
 
 # --- context -----------------------------------------------------------------
@@ -199,3 +319,9 @@ def test_extract_yearbook_continuation_without_header():
 def test_extract_from_bytes():
     pdf_bytes = (SAMPLES / "provincial_statistics_yearbook.pdf").read_bytes()
     assert len(extract_tables(pdf_bytes).tables) == 2
+
+
+def test_drop_running_text_removes_headers_repeated_across_pages():
+    footer = [block(page, 800, f"{page}/20 Incidencia de la pobreza") for page in (1, 2, 3)]
+    caption = block(2, 100, "Cuadro 1. Pobreza")
+    assert drop_running_text([*footer, caption]) == [caption]

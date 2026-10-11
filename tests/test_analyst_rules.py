@@ -13,6 +13,7 @@ from agents.analyst.rules import (
     merge_matches,
     selected_table_ids,
     sources_footer,
+    tables_labelling,
 )
 from agents.analyst.schemas import Candidate, PartAssessment
 from agents.ingestion.rules import pinecone_metadata
@@ -178,3 +179,16 @@ def test_sources_footer():
     assert sources_footer([table], "es", used=True) == "**Tablas utilizadas:**\n- Población (anuario.pdf, pág. 3, 4)"
     assert sources_footer([table], "en", used=False) == "**Tables consulted:**\n- Población (anuario.pdf, p. 3, 4)"
     assert sources_footer([], "en", used=True) == ""
+
+
+def test_tables_labelling_matches_row_labels_ignoring_case_and_accents():
+    def record(table_id: str, labels: list[str]) -> TableRecord:
+        return TableRecord(
+            table_id=table_id, name="t", description="d", columns=[], row_header_column="Área",
+            source=Source(filename="f.pdf", pages=[1]), row_headers=labels, n_rows=len(labels), preview="",
+        )
+
+    records = [record("a", ["Gran Rosario", "Gran Córdoba"]), record("b", ["Cuyo"]), record("c", [])]
+    assert tables_labelling(["gran cordoba"], records) == ["a"]
+    assert tables_labelling(["Cuyo", "Gran Rosario"], records) == ["a", "b"]
+    assert tables_labelling(["Rosario", ""], records) == []  # whole labels only

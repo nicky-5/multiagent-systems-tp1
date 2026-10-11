@@ -16,7 +16,8 @@ def is_blank(text: str | None) -> bool:
 def _strip_decorations(text: str) -> tuple[str, bool]:
     """Remove currency, %, whitespace and sign markers. Returns (digits_and_separators, is_negative)."""
     # \s also matches non-breaking and thin spaces, which some reports use as thousands separators
-    number = re.sub(r"\s", "", _CURRENCY.sub("", text)).replace("−", "-").removesuffix("%")
+    number = re.sub(r"\s", "", _CURRENCY.sub("", text)).replace("−", "-")
+    number = number.removeprefix("%").removesuffix("%")  # "12,5 %", or "% 12,5" in some tables
     is_negative = False
     if number.startswith("(") and number.endswith(")"):  # accounting style: (1.234) is -1234
         is_negative, number = True, number[1:-1]

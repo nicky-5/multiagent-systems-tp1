@@ -29,8 +29,9 @@ SELECT_SYSTEM = """\
 You decide which tables can answer each part of a question. You may only use data in the \
 candidate tables: no general knowledge, external sources or estimates.
 
-For each part of the plan, list the table_ids it needs (several if the data must be \
-combined) and decide whether it is answerable. A part is NOT answerable when:
+For each part of the plan, list the table_ids whose data its calculation uses (several \
+if the data must be combined; a table without the part's entity, e.g. only national \
+totals, isn't used for that entity's value) and decide whether it is answerable. A part is NOT answerable when:
 - a needed period or entity isn't in the table (e.g. the question asks for 2024 and the \
 table ends in 2023, or asks for a province the table doesn't list). Never interpolate, \
 extrapolate or use the nearest year.
@@ -101,6 +102,11 @@ exactly as listed, including spaces, accents and units.
 Rules:
 - Use only values loaded from the tables; never type numbers from the preview into the \
 code. Filter rows by their labels exactly as written in the data.
+- A part about a named entity (a city, region, company) takes its value from that entity's \
+row; a total or average row is not a substitute. If no table has the entity's row, report \
+it as missing.
+- Report only what each part asks for, with no extra figures (e.g. no interval derived \
+from a coefficient of variation).
 - When a table already reports the figure asked for (e.g. a share or change column), \
 read it instead of recomputing it: the report's own figure is the source.
 - Never interpolate, extrapolate, estimate or use outside knowledge (exchange rates, \

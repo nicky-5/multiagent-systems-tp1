@@ -13,10 +13,15 @@ MAX_NAME_LENGTH = 80
 PREVIEW_ROWS = 5
 
 
+def document_prefix(doc_hash: str) -> str:
+    """The start every table_id of a document shares."""
+    return doc_hash[:16]
+
+
 def make_table_id(doc_hash: str, first_page: int, index_on_page: int) -> str:
     """Stable id: the same PDF content always yields the same ids, so re-ingesting
     it overwrites its Pinecone records instead of duplicating them."""
-    return f"{doc_hash[:16]}-p{first_page}-t{index_on_page}"
+    return f"{document_prefix(doc_hash)}-p{first_page}-t{index_on_page}"
 
 
 def count_sentences(text: str) -> int:
@@ -61,7 +66,12 @@ def validate_metadata(meta: TableMetadata, df: pd.DataFrame) -> list[str]:
     if not meta.name.strip():
         errors.append("name is empty.")
     elif len(meta.name) > MAX_NAME_LENGTH:
-        errors.append(f"name has {len(meta.name)} characters; the maximum is {MAX_NAME_LENGTH}.")
+        # Models count characters poorly, so say how much to cut and what can go
+        errors.append(
+            f"name has {len(meta.name)} characters; the maximum is {MAX_NAME_LENGTH}. Remove at "
+            f"least {len(meta.name) - MAX_NAME_LENGTH + 10} characters, e.g. the scope or period, "
+            "which the description already covers."
+        )
 
     sentences = count_sentences(meta.description)
     if not 2 <= sentences <= 4:
