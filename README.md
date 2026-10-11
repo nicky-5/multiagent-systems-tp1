@@ -16,7 +16,7 @@ reports:
 Course assignment for *Sistemas Multiagente de IA* (ITBA). The specification is
 [assignment.md](assignment.md).
 
-**Demo video:** _link to be added_ · **Evaluation report:** [EVALUATION.md](EVALUATION.md)
+**Evaluation report:** [EVALUATION.md](EVALUATION.md)
 
 ---
 

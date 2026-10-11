@@ -237,10 +237,8 @@ Each node of each graph appears as a span. Representative traces:
 
 | Trace | What it shows | Link |
 |---|---|---|
-| Ingestion of `provincial_statistics_yearbook.pdf` | `extract`, two parallel `process_table` branches (enrich → validate → build_record), then one `index` | _public link to be added_ |
-| Q05: multi-table question | retrieval with bilingual searches, selection of two tables from two PDFs, generated code joining them, sandbox run, answer | _public link to be added_ |
-| Q07: `partial` | one part answered, one judged unanswerable in `select` (2025 not in the data); only the answerable part goes to code | _public link to be added_ |
-| Q12: status lowered at run time | `select` says answerable, the program reports the value as `missing`, status becomes `cannot_answer` | _public link to be added_ |
+| Ingestion of `provincial_statistics_yearbook.pdf` | `extract`, two parallel `process_table` branches (enrich → validate → build_record), then one `index` | [link](https://smith.langchain.com/public/22a765d7-fb73-46d6-9928-8ac8f4beae5e/r/01a12904-9fb4-7840-8653-d0c0bb26ccd8) |
+| Q05: multi-table question | retrieval with bilingual searches, selection of two tables from two PDFs, generated code joining them, sandbox run, answer | [link](https://smith.langchain.com/public/71d3ef7f-83d4-4bba-892f-7464f7dc94b1/r/45aff754-1809-4252-933a-ec8134d86af8) |
+| Q07: `partial` | one part answered, one judged unanswerable in `select` (2025 not in the data); only the answerable part goes to code | [link](https://smith.langchain.com/public/6876701e-2ae1-4b34-a57b-9a32aa02540a/r/872c81e7-c224-4df2-b1ce-be6290e092b4) |
+| Q12: status lowered at run time | `select` says answerable, the program reports the value as `missing`, status becomes `cannot_answer` | [link](https://smith.langchain.com/public/005bb3f6-6778-4bb7-81be-545087260f5e/r/92c2c203-5f2c-455c-9b5e-196fc0fd913f) |
 
-<!-- To fill in: open each trace in LangSmith, Share, and paste its public link (or a
-screenshot). The traces can be found by their eval_id metadata (Q05, Q07, Q12). -->
