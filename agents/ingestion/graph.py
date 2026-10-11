@@ -29,10 +29,11 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import RetryPolicy
 
-from agents.ingestion import edges, nodes
+from agents.ingestion import edges, nodes, rules
 from agents.ingestion.schemas import TableRecord
 from agents.ingestion.state import (
     IngestionState,
+    Step,
     TableOutput,
     TableState,
     initial_state,
@@ -94,9 +95,9 @@ def run_config(pdf_path: str) -> RunnableConfig:
     }
 
 
-# Called with (source, message) as ingestion progresses; source is "extract", "index"
-# or a table's label such as "table 2/3 (p. [1])"
-ProgressCallback = Callable[[str, str], None]
+# Called with (source, step, message) as ingestion progresses; source is "extract",
+# "index" or a table's label such as "table 2/3 (p. [1])"
+ProgressCallback = Callable[[str, Step, str], None]
 
 
 @dataclass
@@ -106,7 +107,7 @@ class IngestionOutcome:
     warnings: list[str]  # what was skipped, to show to the user
 
 
-def _no_progress(source: str, message: str) -> None:
+def _no_progress(source: str, step: Step, message: str) -> None:
     pass
 
 
@@ -125,19 +126,23 @@ def ingest(pdf_path: str, on_progress: ProgressCallback | None = None) -> Ingest
         state, run_config(pdf_path), stream_mode=["updates", "custom"], subgraphs=True
     ):
         if mode == "custom":
-            event = cast(dict[str, str], data)
-            report(event["table"], event["message"])
+            event = cast(dict[str, Any], data)
+            report(event["table"], event["step"], event["message"])
             continue
         for node, node_update in cast(dict[str, dict[str, Any] | None], data).items():
             update = node_update or {}
             if node == "extract":
                 warnings += update["warnings"]
-                report("extract", f"{len(update['tables'])} table(s) found")
+                report("extract", "extract", f"{len(update['tables'])} table(s) found")
+                # Every table, so callers can list them before their branches start
+                # (at most max_concurrency branches run at once)
+                for label in rules.table_labels(update["tables"]):
+                    report(label, "pending", "waiting to start")
             elif node == "process_table":  # a branch finished; its output reaches the parent
                 records += update.get("records", [])
                 warnings += update.get("warnings", [])
             elif node == "index":
-                report("index", f"saved and indexed {len(update['indexed'])} table(s)")
+                report("index", "index", f"saved and indexed {len(update['indexed'])} table(s)")
 
     records.sort(key=lambda r: r.table_id)
     return IngestionOutcome(filename=Path(pdf_path).name, records=records, warnings=warnings)
@@ -147,7 +152,7 @@ if __name__ == "__main__":
     started = time.perf_counter()
     outcome = ingest(
         sys.argv[1],
-        lambda source, message: print(f"{time.perf_counter() - started:5.1f}s [{source}] {message}"),
+        lambda source, step, message: print(f"{time.perf_counter() - started:5.1f}s [{source}] {message}"),
     )
     print(f"\n{len(outcome.records)} records, warnings: {outcome.warnings}")
     for record in outcome.records:

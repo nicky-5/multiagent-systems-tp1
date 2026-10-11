@@ -24,6 +24,11 @@ def make_table_id(doc_hash: str, first_page: int, index_on_page: int) -> str:
     return f"{document_prefix(doc_hash)}-p{first_page}-t{index_on_page}"
 
 
+def table_labels(tables: list[ExtractedTable]) -> list[str]:
+    """How each table is named in progress messages, e.g. "table 2/3 (p. [1])"."""
+    return [f"table {i}/{len(tables)} (p. {t.pages})" for i, t in enumerate(tables, start=1)]
+
+
 def count_sentences(text: str) -> int:
     """A sentence ends in . ! or ? followed by the end of the text or by whitespace and
     a capital letter, so the dots in "1.5" and "S.A. para" don't count."""

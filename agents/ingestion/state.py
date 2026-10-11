@@ -1,7 +1,7 @@
 """State of the ingestion graph and of its per-table subgraph."""
 
 import operator
-from typing import Annotated, TypedDict
+from typing import Annotated, Literal, TypedDict
 
 from agents.ingestion.schemas import TableMetadata, TableRecord
 from services.pdf_extract import ExtractedTable
@@ -12,6 +12,11 @@ from services.pdf_extract import ExtractedTable
 # reducer collects them in the parent state whatever order they finish in.
 Records = Annotated[list[TableRecord], operator.add]
 Warnings = Annotated[list[str], operator.add]
+
+# Where a progress event comes from, so callers can show it without parsing the message:
+# extract and index run once per PDF; the others are a table's steps, in the order
+# pending -> enrich -> valid | invalid (-> enrich again) -> done | skipped.
+Step = Literal["extract", "pending", "enrich", "invalid", "valid", "done", "skipped", "index"]
 
 
 class IngestionState(TypedDict):

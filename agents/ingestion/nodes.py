@@ -13,7 +13,7 @@ from langgraph.config import get_stream_writer
 
 from agents.ingestion import prompts, rules
 from agents.ingestion.schemas import TableMetadata
-from agents.ingestion.state import IngestionState, TableState
+from agents.ingestion.state import IngestionState, Step, TableState
 from services.llm import chat_model, embeddings, with_schema
 from services.pdf_extract import extract_tables
 from services.table_store import table_store
@@ -83,7 +83,7 @@ def index(state: IngestionState) -> dict[str, Any]:
 def enrich(state: TableState) -> dict[str, Any]:
     """Ask the LLM for the table's metadata, with feedback on a retry."""
     attempt = state["attempt"] + 1
-    _progress(state, f"asking the LLM for metadata (attempt {attempt})")
+    _progress(state, "enrich", f"asking the LLM for metadata (attempt {attempt})")
     messages: list[BaseMessage] = [
         SystemMessage(prompts.ENRICH_SYSTEM),
         HumanMessage(prompts.enrich_user_prompt(state["table"], state["filename"])),
@@ -103,7 +103,10 @@ def validate(state: TableState) -> dict[str, Any]:
     metadata = state["metadata"]
     assert metadata is not None  # enrich always runs first
     errors = rules.validate_metadata(metadata, state["table"].df)
-    _progress(state, f"validation failed: {'; '.join(errors)}" if errors else "metadata is valid")
+    if errors:
+        _progress(state, "invalid", f"validation failed: {'; '.join(errors)}")
+    else:
+        _progress(state, "valid", "metadata is valid")
     return {"errors": errors}
 
 
@@ -112,7 +115,7 @@ def build_record(state: TableState) -> dict[str, Any]:
     metadata = state["metadata"]
     assert metadata is not None
     record = rules.build_record(metadata, state["table"], state["doc_hash"], state["filename"])
-    _progress(state, f"done: {record.name!r}")
+    _progress(state, "done", f"done: {record.name!r}")
     return {"records": [record]}
 
 
@@ -122,14 +125,14 @@ def reject(state: TableState) -> dict[str, Any]:
         f"{state['label']} skipped: metadata still invalid after {state['attempt']} "
         f"attempts ({'; '.join(state['errors'])})."
     )
-    _progress(state, "skipped")
+    _progress(state, "skipped", "skipped")
     return {"warnings": [warning]}
 
 
-def _progress(state: TableState, message: str) -> None:
+def _progress(state: TableState, step: Step, message: str) -> None:
     """Emit a progress event, received by callers that stream with stream_mode="custom".
 
     Parallel branches' node updates don't say which table they belong to, so the UI
     uses these labeled events to show per-table progress. Outside a stream it's a no-op.
     """
-    get_stream_writer()({"table": state["label"], "message": message})
+    get_stream_writer()({"table": state["label"], "step": step, "message": message})

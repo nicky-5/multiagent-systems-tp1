@@ -8,6 +8,7 @@ from typing import Literal
 
 from langgraph.types import Send
 
+from agents.ingestion import rules
 from agents.ingestion.state import IngestionState, TableState
 
 
@@ -22,10 +23,10 @@ def fan_out(state: IngestionState) -> list[Send] | Literal["__end__"]:
     if not tables:
         return "__end__"  # the value of langgraph's END constant, spelled out for the type checker
     sends: list[Send] = []
-    for i, table in enumerate(tables, start=1):
+    for table, label in zip(tables, rules.table_labels(tables), strict=True):
         branch: TableState = {
             "table": table,
-            "label": f"table {i}/{len(tables)} (p. {table.pages})",
+            "label": label,
             "filename": state["filename"],
             "doc_hash": state["doc_hash"],
             "max_attempts": state["max_attempts"],

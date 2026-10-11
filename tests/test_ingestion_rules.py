@@ -11,6 +11,7 @@ from agents.ingestion.rules import (
     make_table_id,
     metadata_size,
     pinecone_metadata,
+    table_labels,
     validate_metadata,
 )
 from agents.ingestion.schemas import ColumnInfo, TableMetadata, TableRecord
@@ -159,3 +160,11 @@ def test_pinecone_metadata_is_trimmed_to_fit():
     kept = metadata["row_headers"]
     assert isinstance(kept, list) and 0 < len(kept) < len(labels)
     assert metadata["preview"] != ""  # trimming row labels was enough
+
+
+def test_table_labels_number_the_tables_and_list_their_pages():
+    tables = [
+        ExtractedTable(pages=[1], index_on_page=0, df=DF, context=TableContext()),
+        ExtractedTable(pages=[2, 3], index_on_page=0, df=DF, context=TableContext()),
+    ]
+    assert table_labels(tables) == ["table 1/2 (p. [1])", "table 2/2 (p. [2, 3])"]

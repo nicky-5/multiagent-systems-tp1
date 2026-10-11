@@ -126,3 +126,37 @@ def test_ask_page_shows_errors_instead_of_crashing(monkeypatch: pytest.MonkeyPat
 
     assert not app.exception
     assert "ConnectionError: Pinecone is unreachable" in app.error[0].value
+
+
+def ingest_script() -> None:
+    from ui import ingest_page
+
+    ingest_page.render()
+
+
+def test_ingest_page_shows_a_status_card_per_table(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    from agents.ingestion.graph import IngestionOutcome, ProgressCallback
+    from ui import ingest_page
+
+    def fake_ingest(pdf_path: str, on_progress: ProgressCallback | None = None) -> IngestionOutcome:
+        assert on_progress is not None
+        on_progress("extract", "extract", "2 table(s) found")
+        on_progress("table 1/2 (p. [1])", "pending", "waiting to start")
+        on_progress("table 2/2 (p. [2])", "pending", "waiting to start")
+        on_progress("table 1/2 (p. [1])", "enrich", "asking the LLM for metadata (attempt 1)")
+        on_progress("table 2/2 (p. [2])", "skipped", "skipped")
+        on_progress("table 1/2 (p. [1])", "done", "done: '<Población>'")
+        on_progress("index", "index", "saved and indexed 1 table(s)")
+        return IngestionOutcome(filename="anuario.pdf", records=[RECORD], warnings=[])
+
+    (tmp_path / "anuario.pdf").write_bytes(b"%PDF")
+    monkeypatch.setattr(ingest_page, "SAMPLE_PDFS", tmp_path)
+    monkeypatch.setattr(ingest_page, "ingest", fake_ingest)
+    app = AppTest.from_function(ingest_script).run()
+    app.button[1].click().run()  # ingest the sample PDFs
+
+    assert not app.exception
+    cards = next(m.value for m in app.markdown if "ing-grid" in m.value)
+    assert cards.count('class="ing-card"') == 2
+    assert "Indexed" in cards and "Skipped" in cards
+    assert "&lt;Población&gt;" in cards  # PDF and LLM text is escaped
