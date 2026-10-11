@@ -9,10 +9,12 @@ from services.pdf_extract import (
     Row,
     Table,
     TextBlock,
+    Word,
     collect_context,
     drop_running_text,
     extract_tables,
     flatten_header,
+    header_from_words,
     merge_continuations,
     merge_range_rows,
     placements_to_rows,
@@ -85,23 +87,59 @@ def test_tidy_header_single_group_label_becomes_a_note():
     assert flatten_header(rows) == ["Región", "Enero", "Febrero", "Marzo", "Abril"]
 
 
-def test_tidy_header_spreads_group_labels_to_nearest_columns():
-    header: list[Row] = [
-        ["", "", "Hogares", "", "", "Personas", ""],
-        ["Área", "Total", "Incidencia", "CV", "Total", "Incidencia", "CV"],
-    ]
-    rows, notes = tidy_header(header)
-    assert notes == []
-    assert flatten_header(rows) == [
-        "Área", "Hogares Total", "Hogares Incidencia", "Hogares CV",
-        "Personas Total", "Personas Incidencia", "Personas CV",
-    ]
-
-
 def test_tidy_header_leaves_merged_cells_and_the_last_row_alone():
     header: list[Row] = [["", "2023", None, "2024", None], ["Región", "Unidades", "Monto", "", ""]]
     rows, notes = tidy_header(header)
     assert (rows, notes) == (header, [])
+
+
+# --- headers from the page: words at (x0, y0, x1, y1) and rules at (y, x0, x1) ----
+
+COLUMNS = [(0.0, 100.0), (100.0, 160.0), (160.0, 220.0), (220.0, 280.0)]  # row labels + 3 data
+
+
+def word(x0: float, y0: float, text: str, width: float = 30) -> Word:
+    return (x0, y0, x0 + width, y0 + 9, text)
+
+
+def test_header_from_words_group_label_spans_the_columns_under_its_rule():
+    words = [
+        word(150, 0, "Año", 15), word(167, 0, "2025", 20),  # one label: the words are 2 pt apart
+        word(10, 20, "Indicador"), word(115, 20, "1° trim"), word(175, 20, "2° trim"), word(235, 20, "3° trim"),
+    ]
+    rules = [(11.0, 100.0, 220.0)]  # under "Año 2025", over the first two quarters only
+    names, notes = header_from_words(words, rules, COLUMNS)
+    assert names == ["Indicador", "Año 2025 1° trim", "Año 2025 2° trim", "3° trim"]
+    assert notes == []
+
+
+def test_header_from_words_rule_closing_the_header_is_not_a_group():
+    # A rule under every label, with only a lone "%" below it
+    words = [word(10, 0, "Edad"), word(115, 0, "Total"), word(175, 0, "Pobres"), word(235, 0, "Otros"), word(185, 20, "%", 5)]
+    names, notes = header_from_words(words, [(12.0, 0.0, 280.0)], COLUMNS)
+    assert names == ["Edad", "Total", "Pobres", "Otros"]
+    assert notes == ["%"]  # alone in its band: it describes the whole table
+
+
+def test_header_from_words_wrapped_label_and_label_over_the_whole_table():
+    words = [
+        word(150, 0, "2026", 20),  # straddles two columns, alone in its band
+        word(10, 15, "Región"), word(115, 15, "Total"), word(175, 15, "Pobres"), word(235, 15, "No pobres"),
+        word(170, 25, "indigentes", 40),  # second line of "Pobres indigentes"
+    ]
+    names, notes = header_from_words(words, [], COLUMNS)
+    assert names == ["Región", "Total", "Pobres indigentes", "No pobres"]
+    assert notes == ["2026"]
+
+
+def test_header_from_words_two_groups_on_one_rule_split_the_columns():
+    columns = [(0.0, 100.0), (100.0, 150.0), (150.0, 200.0), (200.0, 250.0), (250.0, 300.0)]
+    words = [
+        word(140, 0, "2023", 20), word(240, 0, "2024", 20),
+        word(10, 20, "Región"), word(110, 20, "U"), word(160, 20, "M"), word(210, 20, "U"), word(260, 20, "M"),
+    ]
+    names, _ = header_from_words(words, [(11.0, 0.0, 300.0)], columns)  # a grid: one rule under the row
+    assert names == ["Región", "2023 U", "2023 M", "2024 U", "2024 M"]
 
 
 def test_placements_to_rows_fills_spanned_positions():

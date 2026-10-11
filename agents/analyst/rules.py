@@ -129,6 +129,13 @@ def selected_table_ids(parts: Sequence[PartAssessment]) -> list[str]:
     return list(dict.fromkeys(i for p in parts if p.answerable for i in p.table_ids))
 
 
+def tables_read(table_ids: Sequence[str], code: str) -> list[str]:
+    """The tables a program loads: those whose file name appears in its code. All of
+    table_ids if none does (the program built the names some other way)."""
+    read = [i for i in table_ids if f"{i}.parquet" in code]
+    return read or list(table_ids)
+
+
 # --- checking the program's output ---------------------------------------------------
 
 

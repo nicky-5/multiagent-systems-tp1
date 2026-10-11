@@ -114,12 +114,12 @@ With the rule, Q06 returned `{"Formosa": 165.43}` in 5 of 5 runs, on the first p
   works because the names are spelled identically in both documents; with differing
   spellings the join would silently drop rows.
 
-## Test on a real report
+## Test on real reports
 
-The sample PDFs have ruled tables. To check robustness, the system was also run on a real
-INDEC report (EPH,
-first half of 2026; 20 pages, 15 tables). The PDF was used temporarily and is not part
-of the submission.
+The sample PDFs have ruled tables. To check robustness, the system was also run on two real
+INDEC reports from the EPH: poverty, first half of 2026 (20 pages, 15 tables), and then the
+labour market, second quarter of 2026 (26 pages, 16 tables). The PDFs were used temporarily
+and are not part of the submission.
 
 ### What failed
 
@@ -136,6 +136,20 @@ Almost all the problems were in table extraction, not in the agents:
 - **The context was wrong.** The PDF stores text in drawing order, so captions were
   attached to the wrong tables, and a repeated page footer became one table's name.
 
+The labour market report, run after the changes below, exposed more:
+
+- **Footnote references after values** ("48,9 (2)", "7,5 (1) (2)") kept whole columns
+  from being numbers.
+- **Headers split badly by PyMuPDF's grid.** The years were missing from Cuadros 1.4 and
+  1.6 (two columns were both named "2° trimestre", one for 2025 and one for 2026), Cuadro
+  1.5 came out with 12 columns and labels cut mid-word (`'banos Añ 1° trimestre'`), and
+  in Cuadro 3.4 a label was attached to the wrong columns.
+- **Table names too long.** A prompt rule added for the first report (keep the caption's
+  terms) made the model copy whole INDEC captions, so 10 of 16 tables failed the 80-character
+  limit on their first attempt.
+- **Too many tables cited.** The same figure appears in several Cuadros, and the answer
+  cited every table `select` offered (six for one question), not only the one used.
+
 ### Changes made
 
 In `services/pdf_extract.py`:
@@ -145,9 +159,16 @@ In `services/pdf_extract.py`:
   re-splits merged rows and columns. Cells are read from PyMuPDF's refined grid, which keeps
   a label spanning two columns whole ("2026", where the plain extraction gives "20" / "26").
   The two sample PDFs extract exactly as before.
-- **Headers:** a label over the whole table ("2026", "Pesos", "%") is passed to the
-  metadata prompt as a table-wide note instead of becoming part of every column name.
-  Group labels apply to the columns nearest them.
+- **Headers** are rebuilt from where the words sit on the page (`header_from_words`),
+  not from PyMuPDF's cells. Words close together form a label, which belongs to the column
+  it's centred over. A label with a horizontal rule under it is a group label: it applies to
+  every column under the rule ("Año 2025" over three quarters). The lines of a wrapped label
+  are joined ("Ocupados demandantes de empleo"). A label alone in its band of the header
+  ("2026", "Pesos", "%") describes the whole table, so it's passed to the metadata prompt as
+  a note instead of becoming part of every column name. Columns without data are dropped as
+  spacers, but only when the grid has clearly more columns than the header has labels (the
+  yearbook's change column has no data for 2023, and is kept). This was checked on every
+  table of the four PDFs; the sample PDFs' columns are named as before.
 - **Rows:** label-only rows become a `Section` column.
   Confidence-interval rows (`[41,4 ; 43,7]`) become min/max columns, so the estimates
   stay numeric.
@@ -159,29 +180,40 @@ In `services/pdf_extract.py`:
 
 Elsewhere:
 
-- `services/numbers.py` parses a unit written before the value (`% 5,6`).
+- `services/numbers.py` parses a unit written before the value (`% 5,6`) and ignores
+  footnote references after it (`48,9 (2)`); `(1.234)` is still a negative.
 - **Retrieval** also adds tables whose row labels exactly match an entity in the question.
   "Gran Rosario" is one of Cuadro 4.1's 42 row labels, and semantic search over the whole
   table's embedding didn't find it.
 - **Re-ingesting** a PDF now removes the tables it no longer yields from Pinecone and the
   table store (needed after an extractor change). A table found but rejected this time keeps
   its previous version. `scripts/remove_document.py` removes all of one PDF's tables.
-- **Prompts:** the metadata prompt keeps the caption's own terms; `select` lists only the tables a
+- **Citations:** the answer cites only the tables whose file the generated program reads.
+- **Prompts:** the metadata prompt keeps the caption's terms for what is measured, but asks
+  for a name of at most 80 characters without scope or period (first-attempt failures went
+  from 10 of 16 tables to 2); `select` lists only the tables a
   part's calculation uses; the code prompt says a named entity's value comes from its own
   row, never from a total, and that only what each part asks for is reported. The retry
   message for an over-long table name says how many characters to cut.
 
 
-The course questions were re-run after these changes, with the report still indexed:
-12/12 correct (the table above in Results).
+### Results
+
+Twelve questions over each report, with answers checked against the PDF. On the poverty
+report 11 were right; E11 still gets the status right but reads Cuadro 4.2's "Personas
+Total (en miles)" (the number of indigent people) as the total population. On the labour
+market report all 12 were right in two runs: lookups by quarter and year, one aglomerado,
+the highest value, a confidence interval, a count in thousands, a change between quarters,
+a two-part question, and two unanswerable questions (a quarter without regional data, a
+year before the series starts).
 
 ## Limitations of this evaluation
 
 - The sample PDFs are synthetic and both they and the questions were written by the system's
-  author, so the set tests the designed behaviours. The real report above is one document,
-  and its questions were also written by the author, after the extraction had been fixed on
-  that same document.
-- Twelve questions over five tables (plus twelve over the real report) is small; results on a larger, independent set would be
+  author, so the set tests the designed behaviours. The real reports above are two documents
+  from one publisher, and their questions were also written by the author, after the
+  extraction had been fixed on those same documents.
+- Twelve questions over five tables (plus twelve over each real report) is small; results on a larger, independent set would be
   more convincing.
 - The checks verify statuses, numbers, names and selected tables, not the wording of the
   explanation. Q06's answer without its figure passed them; it was found by reading the

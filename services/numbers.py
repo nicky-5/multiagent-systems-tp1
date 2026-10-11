@@ -6,6 +6,9 @@ from collections.abc import Iterable
 _CURRENCY = re.compile(r"US\$|AR\$|USD|ARS|EUR|[$€£]", re.IGNORECASE)
 _BLANKS = {"", "-", "–", "—", "n/a", "n/d", "s/d", "...", "…"}
 _THOUSANDS_GROUP_SIZE = 3
+# Footnote references after a value: "48,9 (2)", "7,5 (1) (2)". Needs the space and a
+# digit before them, so the accounting-style negative "(1.234)" is never taken for one.
+_FOOTNOTE = re.compile(r"(?<=[\d%])(\s+\(\d{1,2}\))+$")
 
 
 def is_blank(text: str | None) -> bool:
@@ -15,6 +18,7 @@ def is_blank(text: str | None) -> bool:
 
 def _strip_decorations(text: str) -> tuple[str, bool]:
     """Remove currency, %, whitespace and sign markers. Returns (digits_and_separators, is_negative)."""
+    text = _FOOTNOTE.sub("", text.strip())
     # \s also matches non-breaking and thin spaces, which some reports use as thousands separators
     number = re.sub(r"\s", "", _CURRENCY.sub("", text)).replace("−", "-")
     number = number.removeprefix("%").removesuffix("%")  # "12,5 %", or "% 12,5" in some tables

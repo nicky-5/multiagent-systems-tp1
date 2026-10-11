@@ -14,6 +14,7 @@ from agents.analyst.rules import (
     selected_table_ids,
     sources_footer,
     tables_labelling,
+    tables_read,
 )
 from agents.analyst.schemas import Candidate, PartAssessment
 from agents.ingestion.rules import pinecone_metadata
@@ -192,3 +193,9 @@ def test_tables_labelling_matches_row_labels_ignoring_case_and_accents():
     assert tables_labelling(["gran cordoba"], records) == ["a"]
     assert tables_labelling(["Cuyo", "Gran Rosario"], records) == ["a", "b"]
     assert tables_labelling(["Rosario", ""], records) == []  # whole labels only
+
+
+def test_tables_read_finds_the_files_a_program_loads():
+    code = 'df = pd.read_parquet("aaaa-p5-t0.parquet")'
+    assert tables_read(["aaaa-p5-t0", "aaaa-p8-t0"], code) == ["aaaa-p5-t0"]
+    assert tables_read(["aaaa-p5-t0", "aaaa-p8-t0"], "files = glob('*.parquet')") == ["aaaa-p5-t0", "aaaa-p8-t0"]

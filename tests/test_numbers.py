@@ -13,6 +13,10 @@ from services.numbers import infer_decimal_sep, parse_number
         ("1,234.5", 1234.5),  # English decimal
         ("0,2 %", 0.2),  # percentages keep their value
         ("% 5,6", 5.6),  # unit first, when a unit column is merged into the value
+        ("48,9 (2)", 48.9),  # a footnote reference after the value
+        ("0 (1)", 0),
+        ("7,5 (1) (2)", 7.5),
+        ("12,5 % (3)", 12.5),
         ("1.43%", 1.43),
         ("+5.3%", 5.3),
         ("-12,5", -12.5),

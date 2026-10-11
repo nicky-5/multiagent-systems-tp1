@@ -11,8 +11,11 @@ right table for a user's question (semantic search) and to write pandas code ove
 Rules:
 - Use only the table and its surrounding text. Don't invent periods, units or scope \
 that they don't support.
-- name and description: keep the caption's own terms (e.g. both "canasta básica total" and \
-"línea de pobreza" when the caption uses both), because questions will use them.
+- name: at most 80 characters. Use the caption's own terms for what is measured, but leave \
+out the scope and period (e.g. "Total 31 aglomerados urbanos. Segundo trimestre de 2026"): \
+the description covers them.
+- description: keep the caption's own terms (e.g. both "canasta básica total" and "línea de \
+pobreza" when the caption uses both), because questions will use them.
 - unit: take units from the caption, headers and notes (e.g. "en miles de ARS").
 - Write name and descriptions in the language of the document's prose (its title, \
 headings, captions and paragraphs). Ignore the language of names inside the cells: \

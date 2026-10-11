@@ -9,7 +9,7 @@ TextBlock), and the rest of the pipeline is pure functions over that data:
 
 import re
 import statistics
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from itertools import accumulate, groupby, takewhile
 from pathlib import Path
@@ -27,6 +27,8 @@ BBox = tuple[float, float, float, float]  # (x0, y0, x1, y1), points, origin top
 # A position in the document. Tuples compare element by element, so (page, y)
 # orders by page first and then top-to-bottom within the page.
 Pos = tuple[int, float]
+Word = tuple[float, float, float, float, str]  # (x0, y0, x1, y1, text), as PyMuPDF's "words"
+Segment = tuple[float, float, float]  # a horizontal rule: (y, x0, x1)
 
 MAX_HEADER_ROWS = 3
 START_OF_DOC: Pos = (0, 0.0)
@@ -43,6 +45,9 @@ MAX_HEADING_LENGTH = 150
 MIN_RUNNING_PAGES = 3  # text repeated on this many pages is a running header or footer
 MAX_CAPTION_LENGTH = 300  # longer: a paragraph that starts with "Cuadro 1 ...", not a caption
 HEADING_SIZE_MARGIN = 1.5
+LINE_TOLERANCE = 3  # words whose vertical centres differ less than this are on one line
+PHRASE_GAP = 5  # words closer than this (points) form one label; columns are further apart
+RULE_TOLERANCE = 2  # slack when comparing rule and text positions
 
 
 @dataclass
@@ -54,6 +59,8 @@ class RawTable:
     is_last_on_page: bool
     bbox: BBox
     rows: list[Row]
+    header_size: int | None = None  # known when the header was rebuilt from the page
+    header_notes: list[str] = field(default_factory=list[str])  # labels over the whole table
 
 
 @dataclass
@@ -162,37 +169,177 @@ def _is_section_row(row: Sequence[str | None]) -> bool:
 
 
 def tidy_header(header_rows: list[Row]) -> tuple[list[Row], list[str]]:
-    """Handle group labels: header labels that belong to several columns but sit in one.
-
-    A header row with a single label over the data columns ("2026", "Pesos", "%")
-    describes the whole table, so it's returned as a note instead of becoming part of
-    one column's name. In a row above the last with several ("Hogares" ... "Personas"),
-    each label also names the empty cells nearest to it; in the last row, empty cells
-    are columns without a name. The first column (the row labels) is never given a
-    group label. Returns (header_rows, notes).
-    """
+    """Take out header rows with a single label over all the data columns ("2026",
+    "Pesos", "%", "Total 31 aglomerados urbanos"): it describes the whole table, so it's
+    returned as a note instead of becoming part of every column's name. The first
+    column (the row labels) doesn't count. Returns (header_rows, notes)."""
     rows: list[Row] = []
     notes: list[str] = []
-    for row_index, row in enumerate(header_rows):
+    for row in header_rows:
         data = _fill_merged_cells(row)[1:]  # merged cells carry their label right
         labels = [label for label, _ in groupby(label for label in data if label)]
-        is_last = row_index == len(header_rows) - 1
-        if len(labels) == 1 and "" in data:
+        if len(labels) == 1 and len(data) > 1:
             notes.append(labels[0])
             rows.append([row[0]] + [""] * len(data))
-        elif len(labels) > 1 and "" in data and not is_last:
-            rows.append([row[0], *_spread_to_nearest(data)])
         else:
             rows.append(row)
     return rows, notes
 
 
-def _spread_to_nearest(cells: list[str]) -> list[str]:
-    """Fill each empty cell with the nearest label, the left one on a tie:
-    ["", "A", "", "", "B", ""] -> ["A", "A", "A", "B", "B", "B"]."""
-    labelled = [index for index, cell in enumerate(cells) if cell]
-    nearest = [min(labelled, key=lambda index: abs(index - position)) for position in range(len(cells))]
-    return [cell or cells[nearest[position]] for position, cell in enumerate(cells)]
+# --- headers from the page ----------------------------------------------------
+
+
+class _Phrase(NamedTuple):
+    x0: float
+    y0: float
+    x1: float
+    y1: float
+    text: str
+
+    @property
+    def centre(self) -> float:
+        return (self.x0 + self.x1) / 2
+
+
+def header_from_words(
+    words: Sequence[Word], rules: Sequence[Segment], columns: Sequence[tuple[float, float]]
+) -> tuple[list[str], list[str]]:
+    """Name each column from the header's words and horizontal rules.
+
+    columns are the x-ranges of the table's columns. Words close together on a line
+    form a label, which belongs to the column it's centred over. A column's name is:
+      - the group labels over it: a label with a rule under it spanning several columns
+        ("Año 2025" over three quarters) applies to every column under that rule;
+      - then its own labels, top to bottom ("Pobres" + "indigentes", a wrapped label).
+    A label alone in its band of the header that isn't part of a wrapped label ("2026",
+    "Pesos") describes the whole table, as does a group over every data column. Those
+    are returned as notes. The first column (row labels) never gets a group label.
+    Returns (names, notes).
+    """
+    centres = [(left + right) / 2 for left, right in columns]
+    data_columns = set(range(1, len(columns)))
+    phrases = [phrase for line in _lines(words) for phrase in _phrases(line)]
+    runs = _merge_rules(rules)
+
+    def column_of(phrase: _Phrase) -> int:
+        return min(range(len(columns)), key=lambda j: _distance(phrase.centre, columns[j]))
+
+    def rule_under(phrase: _Phrase) -> Segment | None:
+        """The nearest rule below the phrase, with no other label in between."""
+        for y, x0, x1 in sorted(runs):
+            if y < phrase.y1 - RULE_TOLERANCE or not x0 - RULE_TOLERANCE <= phrase.centre <= x1 + RULE_TOLERANCE:
+                continue
+            between = [
+                p for p in phrases
+                if p is not phrase and phrase.y1 - RULE_TOLERANCE < p.y0 and p.y1 < y + RULE_TOLERANCE
+                and p.x0 < phrase.x1 and phrase.x0 < p.x1
+            ]
+            return None if between else (y, x0, x1)
+        return None
+
+    # Group labels and the columns they cover. A group has labels under its rule in at
+    # least two of those columns (a rule closing the header, above a lone "%", doesn't
+    # make one). Where two groups on one rule claim a column (a grid draws one rule
+    # under the whole header row), the nearer one wins.
+    groups: dict[_Phrase, set[int]] = {}
+    for phrase in phrases:
+        rule = rule_under(phrase)
+        if rule is None or column_of(phrase) == 0:
+            continue
+        y, x0, x1 = rule
+        spanned = {j for j in data_columns if x0 - RULE_TOLERANCE <= centres[j] <= x1 + RULE_TOLERANCE}
+        labelled_below = {column_of(p) for p in phrases if p.y0 > y - RULE_TOLERANCE} & spanned
+        if len(spanned) >= 2 and len(labelled_below) >= 2:
+            groups[phrase] = spanned
+    for phrase, spanned in groups.items():
+        rivals = [other for other in groups if other is not phrase and abs(other.y0 - phrase.y0) < LINE_TOLERANCE]
+        groups[phrase] = {
+            j for j in spanned
+            if all(abs(centres[j] - phrase.centre) <= abs(centres[j] - other.centre) for other in rivals if j in groups[other])
+        }
+
+    notes: list[str] = []
+    stacks: list[list[_Phrase]] = [[] for _ in columns]
+    for phrase in sorted(phrases, key=lambda p: (p.y0, p.x0)):
+        column = column_of(phrase)
+        if phrase in groups:
+            if groups[phrase] >= data_columns:
+                notes.append(phrase.text)
+            continue
+        if column != 0 and len(data_columns) >= 2 and _stands_alone(phrase, phrases, columns[column], column_of):
+            notes.append(phrase.text)
+        else:
+            stacks[column].append(phrase)
+
+    names: list[str] = []
+    for j in range(len(columns)):
+        own = " ".join(p.text for p in stacks[j])
+        over = sorted((p for p, spanned in groups.items() if j in spanned and not spanned >= data_columns), key=lambda p: p.y0)
+        # "Pobres" over "Pobres no indigentes" adds nothing
+        labels = [p.text for p in over if not own.startswith(p.text)] + [p.text for p in stacks[j]]
+        names.append(" ".join(label for label, _ in groupby(labels)))
+    return unique_names(names), notes
+
+
+def _stands_alone(
+    phrase: _Phrase, phrases: Sequence[_Phrase], column: tuple[float, float], column_of: Callable[[_Phrase], int]
+) -> bool:
+    """True if no other label over the data columns shares the phrase's band of the
+    header, and it isn't a line of a wrapped label (another label just above or below
+    it in its column; a label straddling two columns isn't). The row labels' name
+    ("Región") often spans the whole header height, so it doesn't count."""
+    others = [p for p in phrases if p is not phrase]
+    shares_band = any(p.y0 < phrase.y1 + 1 and phrase.y0 < p.y1 + 1 for p in others if column_of(p) != 0)
+    height = phrase.y1 - phrase.y0
+    left, right = column
+    inside = left - RULE_TOLERANCE <= phrase.x0 and phrase.x1 <= right + RULE_TOLERANCE
+    wrapped = inside and any(
+        _distance(p.centre, column) == 0
+        and (0 <= p.y0 - phrase.y1 < height / 2 or 0 <= phrase.y0 - p.y1 < height / 2)
+        for p in others
+    )
+    return not shares_band and not wrapped
+
+
+def _distance(x: float, column: tuple[float, float]) -> float:
+    left, right = column
+    return 0 if left <= x <= right else min(abs(x - left), abs(x - right))
+
+
+def _lines(words: Sequence[Word]) -> list[list[Word]]:
+    """Group words into lines of text, top to bottom."""
+    lines: list[list[Word]] = []
+    for word in sorted(words, key=lambda w: ((w[1] + w[3]) / 2, w[0])):
+        centre = (word[1] + word[3]) / 2
+        if lines and abs(centre - (lines[-1][0][1] + lines[-1][0][3]) / 2) < LINE_TOLERANCE:
+            lines[-1].append(word)
+        else:
+            lines.append([word])
+    return lines
+
+
+def _phrases(line: Sequence[Word]) -> list[_Phrase]:
+    """Join a line's words into labels."""
+    phrases: list[_Phrase] = []
+    for x0, y0, x1, y1, text in sorted(line, key=lambda w: w[0]):
+        if phrases and x0 - phrases[-1].x1 < PHRASE_GAP:
+            last = phrases[-1]
+            phrases[-1] = _Phrase(last.x0, min(last.y0, y0), x1, max(last.y1, y1), f"{last.text} {text}")
+        else:
+            phrases.append(_Phrase(x0, y0, x1, y1, text))
+    return phrases
+
+
+def _merge_rules(rules: Sequence[Segment]) -> list[Segment]:
+    """Join rule segments that touch on the same line: a rule drawn cell by cell is one
+    rule, but a gap between segments separates two groups."""
+    merged: list[Segment] = []
+    for y, x0, x1 in sorted(rules, key=lambda r: (round(r[0]), r[1])):
+        if merged and abs(merged[-1][0] - y) < 1 and x0 - merged[-1][2] <= 1:
+            merged[-1] = (merged[-1][0], merged[-1][1], max(merged[-1][2], x1))
+        else:
+            merged.append((y, x0, x1))
+    return merged
 
 
 def flatten_header(header_rows: list[Row]) -> list[str]:
@@ -259,7 +406,10 @@ def merge_continuations(raw_tables: list[RawTable], captions: Sequence[Pos] = ()
     positions of table captions, which separate tables."""
     tables: list[Table] = []
     for raw in raw_tables:
-        header, body = split_header(raw.rows)
+        if raw.header_size is None:
+            header, body = split_header(raw.rows)
+        else:
+            header, body = raw.rows[: raw.header_size], raw.rows[raw.header_size :]
         if tables and is_continuation(tables[-1], raw, header, captions):
             tables[-1].parts.append(raw)
             tables[-1].body.extend(body)  # a repeated header is dropped here
@@ -430,9 +580,18 @@ class _SpanCell(Protocol):
     rowspan: int
 
 
+class _PdfRow(Protocol):
+    @property
+    def bbox(self) -> Sequence[float]: ...
+    @property
+    def cells(self) -> list[Sequence[float] | None]: ...
+
+
 class _PdfTable(Protocol):
     @property
     def bbox(self) -> Sequence[float]: ...
+    @property
+    def rows(self) -> list[_PdfRow]: ...
     @property
     def col_count(self) -> int: ...
     @property
@@ -450,6 +609,7 @@ class _PdfPage(Protocol):
     def get_images(self) -> list[Any]: ...
     def find_tables(self, *, union: bool = False, refine: bool = False) -> _PdfTableFinder | None: ...
     def get_image_info(self) -> list[dict[str, Any]]: ...
+    def get_drawings(self) -> list[dict[str, Any]]: ...
 
 
 class _PdfDocument(Protocol):
@@ -558,14 +718,10 @@ def extract_tables(pdf: str | Path | bytes) -> ExtractionResult:
         # and refine splits the rows and columns the line grid merged.
         finder = page.find_tables(union=True, refine=True)
         found_tables = [found for found in (finder.tables if finder else []) if not _is_toc(found)]
+        words: list[Word] = [cast(Word, tuple(w[:5])) for w in page.get_text("words")]
+        rules = _horizontal_rules(page)
         page_tables = [
-            RawTable(
-                page=page_no,
-                index_on_page=table_index,
-                is_last_on_page=table_index == len(found_tables) - 1,
-                bbox=_to_bbox(found.bbox),
-                rows=[[clean_cell(cell) for cell in row] for row in _rows(found)],
-            )
+            _raw_table(found, page_no, table_index, len(found_tables), words, rules)
             for table_index, found in enumerate(found_tables)
         ]
         raw_tables += [table for table in page_tables if not _is_empty(table)]
@@ -594,7 +750,7 @@ def extract_tables(pdf: str | Path | bytes) -> ExtractionResult:
             warnings.append(f"Page {table.pages[0]}: a table with almost no data was skipped.")
             continue
         context = _context_of(tables, table_index, blocks)
-        context.header_notes = tidy_header(table.header_rows)[1]
+        context.header_notes = table.parts[0].header_notes or tidy_header(table.header_rows)[1]
         extracted.append(
             ExtractedTable(
                 pages=table.pages,
@@ -604,6 +760,74 @@ def extract_tables(pdf: str | Path | bytes) -> ExtractionResult:
             )
         )
     return ExtractionResult(extracted, warnings)
+
+
+def _raw_table(
+    found: _PdfTable, page_no: int, index: int, n_tables: int, words: list[Word], rules: list[Segment]
+) -> RawTable:
+    """One found table as plain data, with its header rebuilt from the page when it has one."""
+    rows = [[clean_cell(cell) for cell in row] for row in _rows(found)]
+    raw = RawTable(
+        page=page_no,
+        index_on_page=index,
+        is_last_on_page=index == n_tables - 1,
+        bbox=_to_bbox(found.bbox),
+        rows=rows,
+    )
+    header, body = split_header(rows)
+    if not header or not body or len(found.rows) != len(rows):
+        return raw
+
+    # Columns without data are spacers the grid split off, when the grid has clearly
+    # more columns than the header has labels (an empty column with its own label,
+    # like a change column with nothing for the first year, is kept)
+    labels_per_row = max(sum(1 for cell in row if cell is not None and not is_blank(cell)) for row in header)
+    kept = list(range(len(rows[0])))
+    if len(rows[0]) > labels_per_row + 1:
+        kept = [0] + [j for j in kept[1:] if any(not is_blank(row[j]) for row in body)]
+    columns = _column_ranges(found, len(header), kept)
+    if columns is None:
+        return raw
+    left, top, right, _ = found.bbox
+    body_top = found.rows[len(header)].bbox[1]
+    header_words = [
+        w for w in words
+        if left <= (w[0] + w[2]) / 2 <= right and top - RULE_TOLERANCE <= (w[1] + w[3]) / 2 < body_top
+    ]
+    header_rules = [r for r in rules if top - RULE_TOLERANCE <= r[0] <= body_top and r[2] > left and r[1] < right]
+    if not header_words:
+        return raw
+    names, notes = header_from_words(header_words, header_rules, columns)
+    raw.rows = [cast(Row, names)] + [[row[j] for j in kept] for row in body]
+    raw.header_size = 1
+    raw.header_notes = notes
+    return raw
+
+
+def _column_ranges(found: _PdfTable, header_size: int, kept: list[int]) -> list[tuple[float, float]] | None:
+    """The x-range of each kept column, from its body cells. A dropped column's space
+    is split between its neighbours. None if a column has no cell geometry."""
+    extents: list[tuple[float, float]] = []
+    for j in kept:
+        boxes = [cells[j] for row in found.rows[header_size:] if (cells := row.cells)[j] is not None]
+        if not boxes:
+            return None
+        extents.append((min(b[0] for b in boxes if b), max(b[2] for b in boxes if b)))
+    left, _, right, _ = found.bbox
+    bounds = [left] + [(extents[k][1] + extents[k + 1][0]) / 2 for k in range(len(extents) - 1)] + [right]
+    return [(bounds[k], bounds[k + 1]) for k in range(len(extents))]
+
+
+def _horizontal_rules(page: _PdfPage) -> list[Segment]:
+    """Horizontal lines on the page, drawn as lines or as thin rectangles."""
+    rules: list[Segment] = []
+    for drawing in page.get_drawings():
+        for item in drawing["items"]:
+            if item[0] == "l" and abs(item[1].y - item[2].y) < 1:
+                rules.append((item[1].y, min(item[1].x, item[2].x), max(item[1].x, item[2].x)))
+            elif item[0] == "re" and item[1].height < 2 and item[1].width > 2:
+                rules.append((item[1].y0, item[1].x0, item[1].x1))
+    return rules
 
 
 def _rows(found: _PdfTable) -> list[Row]:

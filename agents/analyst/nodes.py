@@ -178,10 +178,14 @@ def respond(state: AnalystState) -> dict[str, Any]:
     ]
     text = chat_model().invoke(messages).text.strip()
 
-    # Cite the tables the result came from; when nothing was computed, the related
-    # tables the explanation refers to
+    # Cite the tables the result came from (selection may offer several with the same
+    # figure; the program reads one); when nothing was computed, the related tables
+    # the explanation refers to
     by_id = {c.table_id: c for c in state["candidates"]}
     used = bool(computed)
-    cited = state["selected_ids"] if used else list(dict.fromkeys(i for p in parts for i in p.table_ids))
+    if used and last is not None:
+        cited = rules.tables_read(state["selected_ids"], last.code)
+    else:
+        cited = list(dict.fromkeys(i for p in parts for i in p.table_ids))
     footer = rules.sources_footer([by_id[i] for i in cited if i in by_id], plan.language, used=used)
     return {"answer": f"{text}\n\n{footer}".strip()}
