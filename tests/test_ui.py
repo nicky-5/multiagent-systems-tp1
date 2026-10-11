@@ -163,7 +163,7 @@ def test_ingest_page_shows_a_status_card_per_table(monkeypatch: pytest.MonkeyPat
     assert "&lt;Población&gt;" in cards  # PDF and LLM text is escaped
 
 
-def test_ask_page_pauses_for_review_and_resumes_with_the_chosen_tables(monkeypatch: pytest.MonkeyPatch):
+def test_ask_page_pauses_for_review_and_resumes_with_the_ticked_tables(monkeypatch: pytest.MonkeyPatch):
     other = RECORD.model_copy(update={"table_id": "0123456789abcdef-p3-t0", "name": "Ventas por provincia"})
     table_store().save(RECORD, pd.DataFrame({"Provincia": ["Salta"]}))
     table_store().save(other, pd.DataFrame({"Provincia": ["Salta"]}))
@@ -175,7 +175,7 @@ def test_ask_page_pauses_for_review_and_resumes_with_the_chosen_tables(monkeypat
     def fake_resume(review: TableReview, table_ids: list[str], on_progress: object = None) -> AnalystState:
         resumed_with.append(table_ids)
         state = answered_state(review.state["question"])
-        state["user_table_ids"], state["review_result"] = table_ids, "changed"
+        state["user_table_ids"], state["review_result"] = table_ids, "confirmed"
         return state
 
     monkeypatch.setattr(ask_page, "ask_with_review", fake_ask_with_review)
@@ -186,13 +186,19 @@ def test_ask_page_pauses_for_review_and_resumes_with_the_chosen_tables(monkeypat
 
     assert not app.exception
     assert app.chat_input[0].disabled  # no new question while one waits for review
-    tables = app.multiselect[0]
-    assert tables.value == [TABLE_ID]  # what the analyst selected
-    tables.set_value([other.table_id])
+    # AppTest can't tick boxes in a data_editor (ticked_tables is tested below), so this
+    # confirms the analyst's choice as it is
+    assert "Tick the tables" in " ".join(m.value for m in app.markdown)
     next(b for b in app.button if b.label == "Continue").click().run()
 
     assert not app.exception
-    assert resumed_with == [[other.table_id]]
-    assert not app.multiselect  # the form is gone, the answer is in the history
-    assert any("Tables chosen by you" in c.value for c in app.caption)
+    assert resumed_with == [[TABLE_ID]]  # the table the analyst selected, ticked by default
+    assert not [b for b in app.button if b.label == "Continue"]  # the form is gone
+    assert any("Tables confirmed by you" in c.value for c in app.caption)
     assert "1.441.351" in " ".join(m.value for m in app.markdown)
+
+
+def test_ticked_tables_are_the_ids_of_the_rows_with_use_ticked():
+    edited = pd.DataFrame({"Use": [False, True, True], "Table": ["a", "b", "c"]}, index=["id-a", "id-b", "id-c"])
+    assert ask_page.ticked_tables(edited) == ["id-b", "id-c"]
+    assert ask_page.ticked_tables(edited.assign(Use=False)) == []

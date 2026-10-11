@@ -6,11 +6,11 @@ import streamlit as st
 
 from agents.ingestion.schemas import TableRecord
 from services.table_store import table_store
-from ui.widgets import show_table
+from ui.widgets import page_header, show_table
 
 
 def render() -> None:
-    st.title("Indexed tables")
+    page_header("Indexed tables")
     store = table_store()
     records = store.list_records()
     if not records:

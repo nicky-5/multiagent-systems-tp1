@@ -13,7 +13,7 @@ from streamlit.elements.lib.mutable_status_container import StatusContainer
 from agents.ingestion.graph import ingest
 from agents.ingestion.state import Step
 from services.config import ROOT, get_settings
-from ui.widgets import show_table
+from ui.widgets import page_header, show_table
 
 SAMPLE_PDFS = ROOT / "data" / "sample_pdfs"
 
@@ -29,10 +29,10 @@ class IngestionLog:
 
 
 def render() -> None:
-    st.title("Upload PDFs")
-    st.caption(
+    page_header(
+        "Upload PDFs",
         "Tables are extracted, described by the LLM, validated, and indexed in Pinecone. "
-        "Uploading the same PDF again updates its tables instead of duplicating them."
+        "Uploading the same PDF again updates its tables instead of duplicating them.",
     )
     uploads = st.file_uploader("PDF files", type="pdf", accept_multiple_files=True)
     left, right = st.columns([1, 3])

@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
+import pandas as pd
 import streamlit as st
 
 from agents.analyst.graph import (
@@ -14,8 +15,9 @@ from agents.analyst.graph import (
     resume_review,
 )
 from agents.analyst.state import AnalystState
+from agents.ingestion.schemas import TableRecord
 from services.table_store import table_store
-from ui.widgets import show_table
+from ui.widgets import page_header, show_table
 
 BADGES: dict[str, tuple[str, Literal["green", "orange", "red"]]] = {
     "answered": ("Answered", "green"),
@@ -34,12 +36,11 @@ class Exchange:
 
 
 def render() -> None:
-    st.title("Ask")
-    st.caption(
-        "Questions are answered only from the indexed tables, by code run in a sandbox."
+    header = page_header(
+        "Ask",
+        "Questions are answered only from the indexed tables, by code run in a sandbox.",
     )
-
-    review = st.toggle(
+    review = header.toggle(
         "Review the tables before the code is written",
         key="review_tables",
         help="The analyst pauses after choosing its tables, so you can confirm them or "
@@ -90,18 +91,32 @@ def render_review(question: str, review: TableReview, history: list[Exchange]) -
         # Every stored table can be chosen: the candidates first, then the others
         records = {r.table_id: r for r in table_store().list_records()}
         options = [i for i in by_id if i in records] + [i for i in records if i not in by_id]
-
-        def label(table_id: str) -> str:
-            r = records[table_id]
-            return f"{r.name} · {r.source.filename}, p. {', '.join(map(str, r.source.pages))}"
+        selected = set(state["selected_ids"])
 
         # A form sends its widgets' values only when it's submitted
         with st.form(f"review-{review.thread_id}"):
-            chosen = st.multiselect(
-                "Tables the code may use",
-                options,
-                default=[i for i in state["selected_ids"] if i in records],
-                format_func=label,
+            st.markdown("Tick the tables the code may use:")
+            # A table with a checkbox per row; the other columns can't be edited
+            edited = st.data_editor(
+                pd.DataFrame(
+                    {
+                        "Use": [i in selected for i in options],
+                        "Table": [records[i].name for i in options],
+                        "Source": [source(records[i]) for i in options],
+                        "Rows": [records[i].n_rows for i in options],
+                    },
+                    index=options,  # the table ids: hidden, but kept in the edited copy
+                ),
+                hide_index=True,
+                disabled=["Table", "Source", "Rows"],
+                column_config={
+                    "Use": st.column_config.CheckboxColumn(
+                        "Use", help="Ticked: the analyst's choice", width="small"
+                    ),
+                    "Table": st.column_config.TextColumn(width="medium"),
+                    "Source": st.column_config.TextColumn(width="medium"),
+                    "Rows": st.column_config.NumberColumn(width="small"),
+                },
             )
             st.caption(
                 "If you change them, the analyst checks the question again against "
@@ -112,12 +127,22 @@ def render_review(question: str, review: TableReview, history: list[Exchange]) -
 
     if confirmed:
         with st.chat_message("assistant"):
+            chosen = ticked_tables(edited)
             result = run(question, lambda report: resume_review(review, chosen, report))
         assert not isinstance(result, TableReview)  # a run pauses only once
         history.append(result)
     if confirmed or cancelled:
         st.session_state["pending_review"] = None
         st.rerun()
+
+
+def source(record: TableRecord) -> str:
+    return f"{record.source.filename}, p. {', '.join(map(str, record.source.pages))}"
+
+
+def ticked_tables(edited: pd.DataFrame) -> list[str]:
+    """The ids (the index) of the rows whose "Use" box is ticked, in table order."""
+    return [str(table_id) for table_id, use in edited["Use"].items() if use]
 
 
 def run(
